@@ -68,7 +68,7 @@ class MeshTransport(
     fun start() {
         val bt = adapter ?: return
         if (!bt.isEnabled) return
-        startGattServer(bt)
+        startGattServer()
         startAdvertising(bt)
         startScanning(bt)
     }
@@ -87,7 +87,7 @@ class MeshTransport(
     // Peripheral role: advertise + GATT server
     // ---------------------------------------------------------------------
 
-    private fun startGattServer(bt: BluetoothAdapter) {
+    private fun startGattServer() {
         val server = bluetoothManager.openGattServer(context, gattServerCallback) ?: return
         val service = BluetoothGattService(GattProfile.SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
 
@@ -240,6 +240,7 @@ class MeshTransport(
             gatt.discoverServices()
         }
 
+        @Suppress("DEPRECATION") // descriptor.value setter form; minSdk 29 predates the API-33 writeDescriptor(desc, value) overload
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
             val characteristic = gatt.getService(GattProfile.SERVICE_UUID)
                 ?.getCharacteristic(GattProfile.MESH_CHARACTERISTIC_UUID) ?: return
@@ -253,7 +254,13 @@ class MeshTransport(
             registerLink(CentralLink(gatt, characteristic))
         }
 
-        @Suppress("DEPRECATION") // pre-API-33 callback signature; both are handled where this project's minSdk requires it
+        // Two distinct deprecations here: the 2-arg onCharacteristicChanged
+        // callback itself (superseded by a 3-arg overload with an explicit
+        // value: ByteArray in API 33 — KT-47902 wants @Deprecated re-added on
+        // any override, which we don't want since this is still the only
+        // signature that fires on minSdk 29-32), and characteristic.value's
+        // getter in the body, same as the other two suppressions in this class.
+        @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
             if (characteristic.uuid != GattProfile.MESH_CHARACTERISTIC_UUID) return
             val value = characteristic.value ?: return

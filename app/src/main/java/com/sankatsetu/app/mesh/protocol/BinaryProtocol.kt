@@ -16,16 +16,19 @@ import java.nio.ByteOrder
  * | version | type | ttl | timestamp | flags | length |
  * | 1 byte  |1 byte|1byte|  8 bytes  |1 byte | 2 bytes|
  * +---------+------+-----+-----------+-------+--------+
- * +----------+--------------+---------+-----------+
- * | senderID | recipientID* | payload | signature*|
- * | 8 bytes  |   8 bytes    |variable |  64 bytes |
- * +----------+--------------+---------+-----------+
+ * +----------+--------------+---------+-------+-----------+
+ * | senderID | recipientID* | payload | sigLen| signature*|
+ * | 8 bytes  |   8 bytes    |variable | 1 byte| variable  |
+ * +----------+--------------+---------+-------+-----------+
  * ```
  * `*` optional, presence indicated by flag bits.
  *
  * Header size is fixed at 14 bytes (version+type+ttl+timestamp+flags+length),
- * matching Bitchat's v1 wire format exactly so the parameter table in
- * docs/concepts/ble-mesh-protocol.md stays literally checkable against code.
+ * matching Bitchat's v1 wire format — with one deliberate deviation: Bitchat
+ * assumes a fixed 64-byte Ed25519 signature and has no length prefix for it.
+ * We sign with ECDSA/P-256 instead (see docs/adr/0007-ecdsa-not-ed25519.md),
+ * whose DER-encoded signatures vary roughly 68-72 bytes, so the signature
+ * field carries an explicit 1-byte length instead of being fixed-size.
  */
 object BinaryProtocol {
     const val HEADER_SIZE = 14
@@ -42,11 +45,14 @@ object BinaryProtocol {
         val payload = packet.payload
         require(payload.size <= UShort.MAX_VALUE.toInt()) { "payload too large for v1 length field" }
 
+        val signature = packet.signature
+        require(signature == null || signature.size <= 255) { "signature too large for 1-byte length prefix" }
+
         val out = ByteArrayOutputStream(
             HEADER_SIZE + MeshPacket.SENDER_ID_SIZE +
                 (if (packet.recipientId != null) MeshPacket.RECIPIENT_ID_SIZE else 0) +
                 payload.size +
-                (if (packet.signature != null) MeshPacket.SIGNATURE_SIZE else 0) +
+                (if (signature != null) 1 + signature.size else 0) +
                 16 // slack for padding decision
         )
 
@@ -70,7 +76,10 @@ object BinaryProtocol {
         packet.recipientId?.let { out.write(fixedSize(it, MeshPacket.RECIPIENT_ID_SIZE)) }
 
         out.write(payload)
-        packet.signature?.let { out.write(fixedSize(it, MeshPacket.SIGNATURE_SIZE)) }
+        signature?.let {
+            out.write(it.size)
+            out.write(it)
+        }
 
         val raw = out.toByteArray()
         if (!padding) return raw
@@ -117,8 +126,10 @@ object BinaryProtocol {
 
         var signature: ByteArray? = null
         if (hasSignature) {
-            if (buf.remaining() < MeshPacket.SIGNATURE_SIZE) return null
-            signature = ByteArray(MeshPacket.SIGNATURE_SIZE).also { buf.get(it) }
+            if (buf.remaining() < 1) return null
+            val sigLen = buf.get().toInt() and 0xFF
+            if (buf.remaining() < sigLen) return null
+            signature = ByteArray(sigLen).also { buf.get(it) }
         }
 
         return MeshPacket(

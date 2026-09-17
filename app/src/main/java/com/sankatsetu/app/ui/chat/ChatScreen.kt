@@ -27,8 +27,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -137,7 +137,7 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
                 title = { Text(peer.nickname) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Back")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 }
             )
@@ -177,7 +177,7 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
                     },
                     enabled = peer.handshakeEstablished && draft.isNotBlank()
                 ) {
-                    Icon(Icons.Filled.Send, contentDescription = "Send")
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send")
                 }
             }
         }

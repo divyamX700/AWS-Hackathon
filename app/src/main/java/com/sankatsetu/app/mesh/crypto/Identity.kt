@@ -1,7 +1,6 @@
 package com.sankatsetu.app.mesh.crypto
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -11,20 +10,28 @@ import java.security.KeyStore
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.Signature
+import java.security.spec.ECGenParameterSpec
 
 /**
  * Per-device identity: one Curve25519 keypair for Noise key agreement, one
- * Ed25519 keypair for signing. Generated once on first launch and never
- * transmitted or backed up — this is what "no accounts, no phone numbers"
- * means in practice. See docs/concepts/ble-mesh-protocol.md#identity.
+ * signing keypair for announces/broadcasts. Generated once on first launch
+ * and never transmitted or backed up — this is what "no accounts, no phone
+ * numbers" means in practice. See docs/concepts/ble-mesh-protocol.md#identity.
  *
- * The Ed25519 signing key lives in the Android Keystore (hardware-backed
- * where available) so the private key material never exists in JVM memory
- * as raw bytes. The Curve25519 static key for Noise has to be usable by the
- * pure-JVM noise-java library, which cannot call into Keystore-held keys, so
- * it is generated in-process and persisted encrypted in SharedPreferences —
- * a real production build would want a Keystore-agreement-capable curve
- * (X25519 support landed in Keystore on API 33+) instead; see docs/adr/0002.
+ * The signing key lives in the Android Keystore (hardware-backed where
+ * available) so the private key material never exists in JVM memory as raw
+ * bytes. **Uses ECDSA on the P-256 curve, not Ed25519** — see
+ * docs/adr/0007-ecdsa-not-ed25519.md: Ed25519 turned out to be unavailable
+ * both from AndroidKeyStore (confirmed on a real API 34 emulator: the app
+ * crashed on first launch with `NoSuchAlgorithmException: no such algorithm:
+ * Ed25519 for provider AndroidKeyStore`) and from noise-java (which only
+ * implements Curve25519/Curve448 for Diffie-Hellman, no Ed25519 signing
+ * primitive at all). ECDSA/P-256 has been in AndroidKeyStore since API 18.
+ *
+ * The Curve25519 static key for Noise has to be usable by the pure-JVM
+ * noise-java library, which cannot call into Keystore-held keys, so it is
+ * generated in-process and persisted in SharedPreferences — see
+ * docs/adr/0002's note on Keystore-agreement-capable curves as future work.
  */
 class Identity private constructor(
     val noisePrivateKey: ByteArray,
@@ -39,10 +46,19 @@ class Identity private constructor(
     fun sign(data: ByteArray): ByteArray {
         val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
         val privateKey = keyStore.getKey(keyStoreAlias, null) as java.security.PrivateKey
-        return Signature.getInstance("Ed25519").apply {
+        return Signature.getInstance(SIGNATURE_ALGORITHM).apply {
             initSign(privateKey)
             update(data)
         }.sign()
+    }
+
+    fun verify(data: ByteArray, signature: ByteArray): Boolean {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        val cert = keyStore.getCertificate(keyStoreAlias)
+        return Signature.getInstance(SIGNATURE_ALGORITHM).apply {
+            initVerify(cert.publicKey)
+            update(data)
+        }.verify(signature)
     }
 
     fun signingPublicKeyBytes(): ByteArray {
@@ -53,7 +69,8 @@ class Identity private constructor(
 
     companion object {
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
-        private const val KEYSTORE_ALIAS = "sankatsetu.signing.ed25519"
+        private const val KEYSTORE_ALIAS = "sankatsetu.signing.ecdsa"
+        private const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
         private const val PREFS_NAME = "sankatsetu.identity"
         private const val PREF_NOISE_PRIVATE = "noise_sk"
         private const val PREF_NOISE_PUBLIC = "noise_pk"
@@ -98,17 +115,11 @@ class Identity private constructor(
             val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
             if (keyStore.containsAlias(KEYSTORE_ALIAS)) return
 
-            // API 33+ has KeyProperties.KEY_ALGORITHM_ED25519 directly; on API 29-32
-            // this falls back to a Keystore provider that may not support Ed25519,
-            // in which case the setup flow should catch the exception and fall back
-            // to an in-process (non-Keystore) Ed25519 key — tracked as a Day-1 TODO,
-            // see docs/adr/0002 "signing key portability across API 29-35".
-            val generator = KeyPairGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_EC.let { "Ed25519" },
-                ANDROID_KEYSTORE
-            )
+            val generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, ANDROID_KEYSTORE)
             generator.initialize(
                 KeyGenParameterSpec.Builder(KEYSTORE_ALIAS, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_VERIFY)
+                    .setAlgorithmParameterSpec(ECGenParameterSpec("secp256r1"))
+                    .setDigests(KeyProperties.DIGEST_SHA256)
                     .build()
             )
             generator.generateKeyPair()

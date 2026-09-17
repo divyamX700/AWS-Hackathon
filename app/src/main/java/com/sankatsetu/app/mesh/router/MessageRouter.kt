@@ -145,7 +145,7 @@ class MessageRouter(
         val jitterRangeMs = if (directed) DIRECTED_JITTER_MS else broadcastJitterRange(targetLinkIds.size)
 
         for (linkId in targetLinkIds) {
-            val link = links[linkId] ?: continue
+            if (!links.containsKey(linkId)) continue // skip already-disconnected targets before even scheduling the jitter delay
             scope.launch {
                 val jitter = Random.nextLong(jitterRangeMs.first, jitterRangeMs.last + 1)
                 delay(jitter)

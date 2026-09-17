@@ -5,10 +5,13 @@ package com.sankatsetu.app.mesh.protocol
  *
  * Field layout mirrors Bitchat's `BitchatPacket` (public domain — see
  * NOTICE.md): [version][type][ttl][timestamp:8][flags][length:2][senderID:8]
- * [recipientID:8?][payload][signature:64?], encoded/decoded by
- * [BinaryProtocol]. We deliberately did not port Bitchat's v2 source-routing
- * fields (`route`, `isRSR`) or its zlib payload compression — out of scope
- * for a 4-day build; see docs/adr/0002.
+ * [recipientID:8?][payload][sigLen:1?][signature:variable?], encoded/decoded
+ * by [BinaryProtocol]. The signature is length-prefixed rather than
+ * Bitchat's fixed 64 bytes because we sign with ECDSA/P-256 (variable-length
+ * DER encoding), not Ed25519 — see docs/adr/0007-ecdsa-not-ed25519.md. We
+ * also deliberately did not port Bitchat's v2 source-routing fields
+ * (`route`, `isRSR`) or its zlib payload compression — out of scope for a
+ * 4-day build; see docs/adr/0002.
  *
  * @param ttl Hop budget. Starts at [DEFAULT_TTL] on origin, decremented by
  *   one on every relay. A packet with ttl == 0 is never relayed further.
@@ -32,7 +35,8 @@ data class MeshPacket(
         const val DEFAULT_TTL: Byte = 7
         const val SENDER_ID_SIZE = 8
         const val RECIPIENT_ID_SIZE = 8
-        const val SIGNATURE_SIZE = 64
+        // No fixed SIGNATURE_SIZE: ECDSA/P-256 signatures are variable-length
+        // DER, length-prefixed on the wire instead — see BinaryProtocol.kt.
     }
 
     /** Returns a copy with ttl decremented by one, floored at 0. */

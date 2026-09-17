@@ -47,6 +47,26 @@ class BinaryProtocolTest {
     }
 
     @Test
+    fun `variable-length ECDSA-sized signature round-trips`() {
+        // ECDSA-P256 DER signatures vary ~68-72 bytes (not Ed25519's fixed
+        // 64) — see docs/adr/0007-ecdsa-not-ed25519.md. The signature field
+        // is length-prefixed specifically so 70 (or 68, or 72) all work.
+        for (sigLength in intArrayOf(68, 70, 71, 72)) {
+            val packet = MeshPacket(
+                type = MessageType.ANNOUNCE,
+                ttl = 7,
+                timestamp = 999L,
+                senderId = senderId(0x07),
+                payload = "announce payload".toByteArray(),
+                signature = ByteArray(sigLength) { (it + sigLength).toByte() }
+            )
+            val encoded = BinaryProtocol.encode(packet, padding = false)
+            val decoded = BinaryProtocol.decode(encoded)
+            assertEquals("failed for signature length $sigLength", packet, decoded)
+        }
+    }
+
+    @Test
     fun `padded frame decodes back to the same logical packet`() {
         val packet = MeshPacket(
             type = MessageType.NOISE_HANDSHAKE,

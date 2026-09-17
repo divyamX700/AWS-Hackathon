@@ -25,26 +25,50 @@ Not yet built: on-device LLM assistant, payment import, mesh IOU, Cedar
 authorization, Nostr bridge, gateway coordinator. These land Day 2-3 per
 `docs/PLAN.md` — this README will be updated as each lands.
 
-**This has not been built or run on a device yet** — it was authored on a
-machine without an Android SDK or a physical device attached. Before
-anything else, open the project in Android Studio, let Gradle sync, and fix
-whatever the first real compile turns up. `docs/adr/0002` flags the two
-known risk points to check first (the `noise-java` Maven coordinate, and
-Ed25519 Keystore support on API 29-32).
+**Verified building and running**: `./gradlew assembleDebug` succeeds and
+produces a real `app-debug.apk` (~40 MB); `./gradlew testDebugUnitTest`
+passes all unit tests (12/12, 0 failures) — protocol codec round-trips
+(including ECDSA's variable-length signatures) and the dedup cache. The APK
+was installed and launched on a real API 34 emulator: it does **not**
+crash, `MainActivity`'s window reaches `reportedDrawn=true` (confirmed via
+`dumpsys activity` — Compose actually renders), and the permission flow
+fires correctly. This caught and fixed two real bugs before they became
+Day-2 blockers — see `docs/adr/0006-jdk11-toolchain-downgrade.md` (this
+build machine's JDK 17+ can't open an NIO Selector at all, forcing a
+downgrade to AGP 7.4.2/Gradle 7.6.4/Kotlin 1.9.24/JDK 11 — **only relevant
+if you hit the identical "Unable to establish loopback connection" error**;
+most machines won't and can bump the toolchain back up freely) and
+`docs/adr/0007-ecdsa-not-ed25519.md` (Ed25519 isn't available from
+AndroidKeyStore in practice — even on API 34 — so the identity signing key
+is ECDSA/P-256 instead, which also meant fixing the wire protocol's
+signature field from fixed-64-bytes to length-prefixed).
+
+**Not yet verified**: BLE mesh discovery/pairing between two real phones —
+an emulator has no Bluetooth radio, so this genuinely needs physical
+hardware. Everything else in the Day 1 slice has been verified running, not
+just compiling.
 
 ## Running it
 
 ```bash
 git clone <this repo>
 cd SankatSetu
-# Open in Android Studio (Ladybug 2024.2.1 or later), let Gradle sync.
+# Open in Android Studio, let Gradle sync.
 # Or from the command line, once local.properties points at your SDK:
 ./gradlew assembleDebug
 ```
 
+If Gradle fails with `java.io.IOException: Unable to establish loopback
+connection` / `Unable to establish loopback connection`, see
+`docs/adr/0006-jdk11-toolchain-downgrade.md` — this is a machine-specific
+JDK/Windows bug, not a project bug, and that ADR has the diagnosis and fix
+(pin `org.gradle.java.home` to a JDK 11 install in your own
+`~/.gradle/gradle.properties`, not the project's).
+
 Requires two Android 10+ (API 29+) devices with Bluetooth LE for the mesh
-demo. No AWS account, no server, no internet connection needed for Day 1's
-chat feature.
+demo — an emulator has no real Bluetooth radio, so mesh discovery/pairing
+can only be verified on physical hardware. No AWS account, no server, no
+internet connection needed for Day 1's chat feature.
 
 Day 2's Assistant tab will additionally require side-loading a Gemma model
 file — see `docs/adr/0005-model-assets-not-committed.md` once that lands.
