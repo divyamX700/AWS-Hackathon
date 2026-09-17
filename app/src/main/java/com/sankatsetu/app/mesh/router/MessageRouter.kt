@@ -1,7 +1,7 @@
 package com.sankatsetu.app.mesh.router
 
-import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.protocol.BinaryProtocol
+import com.sankatsetu.app.mesh.protocol.FragmentPacket
 import com.sankatsetu.app.mesh.protocol.MeshPacket
 import com.sankatsetu.app.mesh.protocol.MessageType
 import kotlinx.coroutines.CoroutineScope
@@ -24,11 +24,20 @@ import kotlin.random.Random
  *
  * [MeshTransport] feeds this class raw bytes off the wire and asks it to
  * relay/broadcast; this class never touches `BluetoothGatt` directly.
+ *
+ * Takes [localPeerId] and an optional [signer] rather than the whole
+ * [com.sankatsetu.app.mesh.crypto.Identity] — the router only ever needs
+ * "what's my ID" and "sign these bytes," and decoupling from Identity means
+ * this class (and the mesh behaviour it implements) can be exercised in a
+ * plain JVM unit test without an Android Keystore, see
+ * `MessageRouterFragmentationTest`.
  */
 class MessageRouter(
-    private val identity: Identity,
+    private val localPeerId: ByteArray,
     private val scope: CoroutineScope,
-    private val seenCache: SeenMessageCache = SeenMessageCache()
+    private val signer: ((ByteArray) -> ByteArray)? = null,
+    private val seenCache: SeenMessageCache = SeenMessageCache(),
+    private val fragmentAssembler: FragmentAssembler = FragmentAssembler()
 ) {
     private val links = ConcurrentHashMap<String, MeshLink>()
     private val linksLock = Mutex()
@@ -57,11 +66,11 @@ class MessageRouter(
             type = type,
             ttl = MeshPacket.DEFAULT_TTL,
             timestamp = System.currentTimeMillis(),
-            senderId = identity.peerId,
+            senderId = localPeerId,
             recipientId = null,
             payload = payload
         )
-        val packet = if (sign) unsigned.copy(signature = identity.sign(unsigned.signingBytes())) else unsigned
+        val packet = if (sign) unsigned.copy(signature = signer!!(unsigned.signingBytes())) else unsigned
         seenCache.markIfNew(packet) // never relay our own origin back to ourselves
         relayToFanout(packet, ingressLinkId = null, padded = padded)
     }
@@ -72,11 +81,11 @@ class MessageRouter(
             type = type,
             ttl = MeshPacket.DEFAULT_TTL,
             timestamp = System.currentTimeMillis(),
-            senderId = identity.peerId,
+            senderId = localPeerId,
             recipientId = recipientId,
             payload = payload
         )
-        val packet = if (sign) unsigned.copy(signature = identity.sign(unsigned.signingBytes())) else unsigned
+        val packet = if (sign) unsigned.copy(signature = signer!!(unsigned.signingBytes())) else unsigned
         seenCache.markIfNew(packet)
         relayDirected(packet, ingressLinkId = null, padded = padded)
     }
@@ -86,11 +95,16 @@ class MessageRouter(
     /** Called by [MeshTransport] whenever bytes arrive on any link. */
     suspend fun handleInboundBytes(fromLinkId: String, raw: ByteArray) {
         val packet = BinaryProtocol.decode(raw) ?: return // malformed — drop silently, don't crash the mesh
-        if (packet.senderId.contentEquals(identity.peerId)) return // our own packet came back around; ignore
+        if (packet.senderId.contentEquals(localPeerId)) return // our own packet came back around; ignore
 
         if (!seenCache.markIfNew(packet)) return // duplicate: dedup absorbs it, no re-relay
 
-        val isForUs = packet.recipientId == null || packet.recipientId.contentEquals(identity.peerId)
+        if (packet.type == MessageType.FRAGMENT) {
+            handleFragment(packet, fromLinkId)
+            return
+        }
+
+        val isForUs = packet.recipientId == null || packet.recipientId.contentEquals(localPeerId)
         if (isForUs) _inboundApplicationPackets.tryEmit(packet)
 
         if (packet.ttl <= 0) return // hop budget exhausted, don't relay further
@@ -112,6 +126,34 @@ class MessageRouter(
             relayToFanout(clamped, ingressLinkId = fromLinkId, padded = false)
         }
         // Directed traffic addressed to us: consumed above, nothing further to relay.
+    }
+
+    /**
+     * A [MessageType.FRAGMENT] packet is itself relayed exactly like any
+     * other packet (its own TTL/dedup/fanout already ran in the caller) —
+     * what's special is that once every fragment for its ID has arrived,
+     * the reassembled bytes are the *original* packet's full wire encoding,
+     * fed straight back into [handleInboundBytes] as if freshly received.
+     * That single re-entry point is what gives the reassembled packet its
+     * own correct dedup/relay/delivery handling, whatever type it turns
+     * out to be, without duplicating that logic here.
+     */
+    private suspend fun handleFragment(packet: MeshPacket, fromLinkId: String) {
+        val fragment = FragmentPacket.decode(packet.payload) ?: return
+        val reassembled = fragmentAssembler.addFragment(fragment)
+
+        if (packet.ttl > 0) {
+            val decremented = packet.decremented()
+            if (packet.recipientId != null) {
+                relayDirected(decremented, ingressLinkId = fromLinkId, padded = false)
+            } else {
+                relayToFanout(decremented, ingressLinkId = fromLinkId, padded = false)
+            }
+        }
+
+        if (reassembled != null) {
+            handleInboundBytes(fromLinkId, reassembled)
+        }
     }
 
     // --- Relay mechanics ---
@@ -144,6 +186,26 @@ class MessageRouter(
         val bytes = BinaryProtocol.encode(packet, padding = padded)
         val jitterRangeMs = if (directed) DIRECTED_JITTER_MS else broadcastJitterRange(targetLinkIds.size)
 
+        // Payloads over one BLE write get fragmented — see FragmentPacket.kt.
+        // Each fragment travels as its own [MessageType.FRAGMENT] packet,
+        // carrying the same sender/recipient/ttl as the packet it came from,
+        // so it relays and dedupes independently of the other fragments.
+        val outboundFrames: List<ByteArray> = if (bytes.size <= FragmentPacket.DEFAULT_CHUNK_SIZE) {
+            listOf(bytes)
+        } else {
+            FragmentPacket.split(bytes).map { fragment ->
+                val fragmentPacket = MeshPacket(
+                    type = MessageType.FRAGMENT,
+                    ttl = packet.ttl,
+                    timestamp = packet.timestamp,
+                    senderId = packet.senderId,
+                    recipientId = packet.recipientId,
+                    payload = fragment.encode()
+                )
+                BinaryProtocol.encode(fragmentPacket, padding = false)
+            }
+        }
+
         for (linkId in targetLinkIds) {
             if (!links.containsKey(linkId)) continue // skip already-disconnected targets before even scheduling the jitter delay
             scope.launch {
@@ -153,7 +215,10 @@ class MessageRouter(
                 // arriving from elsewhere during the delay is already absorbed by
                 // SeenMessageCache on the receiving end, so we don't need to
                 // re-check seenCache here — we're the origin of this specific send.
-                links[linkId]?.send(bytes)
+                val link = links[linkId] ?: return@launch
+                for (frame in outboundFrames) {
+                    if (!link.send(frame)) break // link died mid-burst — stop sending remaining fragments to it
+                }
             }
         }
     }

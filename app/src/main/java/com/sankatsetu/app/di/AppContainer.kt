@@ -26,5 +26,9 @@ class AppContainer(context: Context) {
 
     val database: AppDatabase = AppDatabase.build(context)
 
-    val messageRouter: MessageRouter = MessageRouter(identity, appScope)
+    val messageRouter: MessageRouter = MessageRouter(
+        localPeerId = identity.peerId,
+        scope = appScope,
+        signer = { data -> identity.sign(data) }
+    )
 }
