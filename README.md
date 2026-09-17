@@ -15,38 +15,54 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
 
 ## Status
 
-**Day 1 slice** (per `docs/adr/0001-hackathon-scope-and-day1-slice.md`):
-BLE mesh transport, binary wire protocol, TTL/dedup/jitter/fanout routing,
-Noise `XX`-encrypted 1:1 chat, minimal Room+SQLCipher persistence, minimal
-Compose UI (peer list + one thread). Two phones in airplane mode + Bluetooth
-on should be able to discover each other and exchange encrypted messages.
+**Day 2 slice** (per `docs/adr/0001-hackathon-scope-and-day1-slice.md` and
+its Day 2 follow-ons):
 
-Not yet built: on-device LLM assistant, payment import, mesh IOU, Cedar
-authorization, Nostr bridge, gateway coordinator. These land Day 2-3 per
-`docs/PLAN.md` — this README will be updated as each lands.
+- **Mesh**: BLE transport, binary wire protocol, TTL/dedup/jitter/fanout
+  routing, Noise `XX`-encrypted 1:1 chat, packet fragmentation for payloads
+  over one BLE write, and a sender outbox so a message queued for an
+  unreachable peer waits instead of vanishing (courier envelopes — relaying
+  via a *third party's* phone — deferred to Day 3, see
+  `docs/adr/0008-store-and-forward-scope.md`).
+- **Assistant**: a real, working offline Q&A tab — keyword/term-overlap
+  retrieval (not yet the neural-embedding search the PRD describes) over a
+  small hand-written first-aid/disaster corpus, with the wiring already in
+  place for real on-device Gemma generation via MediaPipe once a model file
+  is side-loaded. See `docs/adr/0009-on-device-assistant-scope.md` for
+  exactly what's real vs. deferred here.
+- Persistence (Room+SQLCipher) and a two-tab Compose UI (Chat, Assistant).
 
-**Verified building and running**: `./gradlew assembleDebug` succeeds and
-produces a real `app-debug.apk` (~40 MB); `./gradlew testDebugUnitTest`
-passes all unit tests (12/12, 0 failures) — protocol codec round-trips
-(including ECDSA's variable-length signatures) and the dedup cache. The APK
-was installed and launched on a real API 34 emulator: it does **not**
-crash, `MainActivity`'s window reaches `reportedDrawn=true` (confirmed via
-`dumpsys activity` — Compose actually renders), and the permission flow
-fires correctly. This caught and fixed two real bugs before they became
-Day-2 blockers — see `docs/adr/0006-jdk11-toolchain-downgrade.md` (this
-build machine's JDK 17+ can't open an NIO Selector at all, forcing a
-downgrade to AGP 7.4.2/Gradle 7.6.4/Kotlin 1.9.24/JDK 11 — **only relevant
-if you hit the identical "Unable to establish loopback connection" error**;
-most machines won't and can bump the toolchain back up freely) and
-`docs/adr/0007-ecdsa-not-ed25519.md` (Ed25519 isn't available from
-AndroidKeyStore in practice — even on API 34 — so the identity signing key
-is ECDSA/P-256 instead, which also meant fixing the wire protocol's
-signature field from fixed-64-bytes to length-prefixed).
+Not yet built: payment import, mesh IOU, courier envelopes, Cedar
+authorization, Nostr bridge, gateway coordinator. Day 3 per `docs/PLAN.md`.
+
+**Verified building and running, not just compiling**: `./gradlew
+assembleDebug` succeeds (~57 MB APK, MediaPipe's native libs included);
+`./gradlew testDebugUnitTest` passes all 44 unit tests, 0 failures —
+including a genuine multi-router mesh integration test (two and three
+`MessageRouter`s wired together via in-memory links, proving encode →
+fragment → relay → reassemble → dedup → deliver end to end, with real
+multi-hop relay) and an outbox integration test proving a message queued
+with zero mesh links delivers once a link appears. The built APK was
+installed and launched on a real API 34 emulator in both a permissions-
+denied and a permissions-granted run: no crash either way, and with
+Bluetooth permissions granted, `MeshForegroundService` is confirmed
+actually running (`isForeground=true` via `dumpsys activity services`) —
+not just "didn't crash," genuinely alive.
+
+This process caught four real bugs before they shipped, each documented in
+an ADR: a build-machine JDK/Windows networking bug that forced a toolchain
+downgrade (`docs/adr/0006`), Ed25519 being unavailable from AndroidKeyStore
+in practice plus the resulting fixed-vs-variable-length signature bug
+(`docs/adr/0007`), a `MutableSharedFlow` replay-timing bug in a test that
+mirrors a real footgun for any late-attaching collector, and — found only
+by actually running the Day 2 build on a device — `MainActivity` crashing
+on Android 14 by starting a Bluetooth-typed foreground service without
+checking whether Bluetooth permissions were actually granted, not just
+requested (`docs/adr/0009`'s bug note).
 
 **Not yet verified**: BLE mesh discovery/pairing between two real phones —
 an emulator has no Bluetooth radio, so this genuinely needs physical
-hardware. Everything else in the Day 1 slice has been verified running, not
-just compiling.
+hardware. Everything else has been verified running, not just compiling.
 
 ## Running it
 
@@ -68,10 +84,14 @@ JDK/Windows bug, not a project bug, and that ADR has the diagnosis and fix
 Requires two Android 10+ (API 29+) devices with Bluetooth LE for the mesh
 demo — an emulator has no real Bluetooth radio, so mesh discovery/pairing
 can only be verified on physical hardware. No AWS account, no server, no
-internet connection needed for Day 1's chat feature.
+internet connection needed for the mesh or Assistant features.
 
-Day 2's Assistant tab will additionally require side-loading a Gemma model
-file — see `docs/adr/0005-model-assets-not-committed.md` once that lands.
+The Assistant tab works out of the box with no setup (offline keyword
+retrieval over the starter corpus). To get real on-device LLM-generated
+answers instead of the extractive fallback, side-load a Gemma model file —
+see `docs/adr/0005-model-assets-not-committed.md` and
+`docs/adr/0009-on-device-assistant-scope.md` for the expected path
+(`MediaPipeLlmAssistant.defaultModelPath`) and exact filename.
 
 ## Repo layout
 
@@ -79,14 +99,16 @@ file — see `docs/adr/0005-model-assets-not-committed.md` once that lands.
 app/                    the Android app
   src/main/java/com/sankatsetu/app/
     mesh/
-      protocol/         binary wire format, TLV packets — pure Kotlin, unit-tested
-      crypto/           identity keys, Noise XX/X sessions
-      router/           TTL/dedup/jitter/fanout dispatch — pure Kotlin, unit-tested
+      protocol/         binary wire format, TLV packets, fragmentation — pure Kotlin, unit-tested
+      crypto/           identity keys (ECDSA + Curve25519), Noise XX sessions
+      router/           TTL/dedup/jitter/fanout/fragment/outbox dispatch — pure Kotlin, unit-tested
       transport/        BLE advertising/scanning/GATT, foreground service
+    assistant/          offline knowledge retrieval + MediaPipe LLM wrapper — mostly pure Kotlin, unit-tested
     data/               Room entities/DAOs, SQLCipher wiring
     di/                 hand-rolled composition root (AppContainer)
-    ui/                 Compose screens + ViewModels
-  src/test/             JVM unit tests (protocol + router — no device needed)
+    ui/                 Compose screens + ViewModels (Chat, Assistant)
+  src/main/assets/kb/   starter first-aid/disaster knowledge base (JSON)
+  src/test/             JVM unit tests — no device needed (44 tests)
 docs/
   PRD.md                full product spec
   PLAN.md                day-by-day build plan

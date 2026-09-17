@@ -1,6 +1,9 @@
 package com.sankatsetu.app.di
 
 import android.content.Context
+import com.sankatsetu.app.assistant.AssistantEngine
+import com.sankatsetu.app.assistant.KnowledgeBaseLoader
+import com.sankatsetu.app.assistant.MediaPipeLlmAssistant
 import com.sankatsetu.app.data.AppDatabase
 import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.router.MessageRouter
@@ -30,5 +33,14 @@ class AppContainer(context: Context) {
         localPeerId = identity.peerId,
         scope = appScope,
         signer = { data -> identity.sign(data) }
+    )
+
+    // The model file is side-loaded, not bundled (docs/adr/0005) — on a
+    // fresh device MediaPipeLlmAssistant.isAvailable is false and
+    // AssistantEngine transparently falls back to extractive answers from
+    // the knowledge base, per docs/adr/0009.
+    val assistantEngine: AssistantEngine = AssistantEngine(
+        knowledgeBase = KnowledgeBaseLoader.load(context),
+        llm = MediaPipeLlmAssistant(context, MediaPipeLlmAssistant.defaultModelPath(context))
     )
 }

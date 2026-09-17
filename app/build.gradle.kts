@@ -116,6 +116,14 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.3.1")
     implementation("androidx.camera:camera-view:1.3.1")
 
+    // --- On-device LLM assistant (Day 2, F2) ---
+    // The model file itself is never bundled — see
+    // docs/adr/0005-model-assets-not-committed.md — this is just the
+    // inference runtime. If this pulls in bytecode too new for AGP 7.4.2's
+    // D8 (see docs/adr/0006's CameraX/Lifecycle precedent), pin to an older
+    // tasks-genai release the same way.
+    implementation("com.google.mediapipe:tasks-genai:0.10.16")
+
     // --- Testing ---
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
