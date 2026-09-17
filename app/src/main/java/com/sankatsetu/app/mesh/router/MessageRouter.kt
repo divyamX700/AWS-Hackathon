@@ -37,7 +37,8 @@ class MessageRouter(
     private val scope: CoroutineScope,
     private val signer: ((ByteArray) -> ByteArray)? = null,
     private val seenCache: SeenMessageCache = SeenMessageCache(),
-    private val fragmentAssembler: FragmentAssembler = FragmentAssembler()
+    private val fragmentAssembler: FragmentAssembler = FragmentAssembler(),
+    private val outbox: SenderOutbox = SenderOutbox()
 ) {
     private val links = ConcurrentHashMap<String, MeshLink>()
     private val linksLock = Mutex()
@@ -75,8 +76,32 @@ class MessageRouter(
         relayToFanout(packet, ingressLinkId = null, padded = padded)
     }
 
-    /** Origin directed traffic (handshake, private message, IOU) toward a known peer ID. */
-    suspend fun sendDirected(type: MessageType, recipientId: ByteArray, payload: ByteArray, sign: Boolean = false, padded: Boolean = true) {
+    /**
+     * Origin directed traffic (handshake, private message, IOU) toward a
+     * known peer ID. If there is currently no mesh link to *anyone* — not
+     * just no link to this specific recipient — the message can't possibly
+     * get anywhere yet, so it's queued in [outbox] instead of being silently
+     * dropped. [retryOutbox] resends it once a link exists again. This is
+     * deliberately conservative: with at least one live link, we still
+     * attempt the send (it may reach the recipient in one hop or relay
+     * through whoever *is* connected) rather than queuing pre-emptively.
+     */
+    suspend fun sendDirected(type: MessageType, recipientId: ByteArray, payload: ByteArray, sign: Boolean = false, padded: Boolean = true): String {
+        val messageId = java.util.UUID.randomUUID().toString()
+        if (links.isEmpty()) {
+            outbox.enqueue(
+                SenderOutbox.QueuedMessage(
+                    messageId = messageId,
+                    recipientId = recipientId,
+                    type = type,
+                    payload = payload,
+                    sign = sign,
+                    queuedAt = System.currentTimeMillis()
+                )
+            )
+            return messageId
+        }
+
         val unsigned = MeshPacket(
             type = type,
             ttl = MeshPacket.DEFAULT_TTL,
@@ -88,6 +113,22 @@ class MessageRouter(
         val packet = if (sign) unsigned.copy(signature = signer!!(unsigned.signingBytes())) else unsigned
         seenCache.markIfNew(packet)
         relayDirected(packet, ingressLinkId = null, padded = padded)
+        return messageId
+    }
+
+    /**
+     * Re-attempts every outbox message queued for [recipientId]. Callers
+     * (e.g. [com.sankatsetu.app.ui.chat.ChatViewModel] on receiving that
+     * peer's announce) are responsible for knowing *when* a peer becomes
+     * reachable again — the router itself only knows about raw links, not
+     * which peer identity sits behind one, until an announce or handshake
+     * resolves that mapping.
+     */
+    suspend fun retryOutbox(recipientId: ByteArray) {
+        for (queued in outbox.pending(recipientId)) {
+            outbox.recordAttempt(recipientId, queued.messageId)
+            sendDirected(queued.type, queued.recipientId, queued.payload, queued.sign)
+        }
     }
 
     // --- Inbound ---

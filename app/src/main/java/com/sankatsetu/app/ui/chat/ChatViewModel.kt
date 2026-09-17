@@ -147,6 +147,12 @@ class ChatViewModel(
             peerDao.touch(peerIdB64, now, hopCount.toInt())
         }
 
+        // Any announce from a peer means the mesh currently has a path to
+        // them (even if we don't yet have a live link to *them specifically*
+        // — this announce reached us somehow), so retry anything queued for
+        // them in the sender outbox (see MessageRouter.retryOutbox's doc).
+        router.retryOutbox(packet.senderId)
+
         // Auto-initiate a handshake with newly-discovered one-hop peers so
         // encrypted messaging is ready by the time the user opens the thread.
         if (hopCount <= 1 && sessions[peerIdB64] == null) {
