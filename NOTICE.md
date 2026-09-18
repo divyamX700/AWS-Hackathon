@@ -85,3 +85,12 @@ Strands Agents SDK.
 
 Source: https://github.com/strands-agents/harness-sdk
 License: Apache License 2.0
+
+## JetBrains Mono
+
+`res/font/jetbrains_mono_*.ttf` — the monospace face used for the "field
+radio" instrument register (peer IDs, hop counts, timestamps, signal
+readouts; see `docs/adr/0014-field-radio-design-language.md`).
+
+Source: https://github.com/JetBrains/JetBrainsMono
+License: SIL Open Font License 1.1

@@ -6,6 +6,7 @@ import com.sankatsetu.app.assistant.KnowledgeBaseLoader
 import com.sankatsetu.app.assistant.MediaPipeLlmAssistant
 import com.sankatsetu.app.data.AppDatabase
 import com.sankatsetu.app.mesh.crypto.Identity
+import com.sankatsetu.app.mesh.crypto.NicknameStore
 import com.sankatsetu.app.mesh.router.MessageRouter
 import com.sankatsetu.app.payments.IouManager
 import kotlinx.coroutines.CoroutineScope
@@ -29,6 +30,8 @@ class AppContainer(context: Context) {
 
     val identity: Identity = Identity.loadOrCreate(context)
 
+    val nicknameStore: NicknameStore = NicknameStore(context, identity.peerId)
+
     val database: AppDatabase = AppDatabase.build(context)
 
     val messageRouter: MessageRouter = MessageRouter(
@@ -43,8 +46,13 @@ class AppContainer(context: Context) {
     // the knowledge base, per docs/adr/0009.
     private val llmAssistant = MediaPipeLlmAssistant(context, MediaPipeLlmAssistant.defaultModelPath(context))
 
+    // Held separately from AssistantEngine (not just passed through) so the
+    // Docs browser can list/read the raw knowledge base without the engine
+    // exposing its retrieval-internal field.
+    val knowledgeBase = KnowledgeBaseLoader.load(context)
+
     val assistantEngine: AssistantEngine = AssistantEngine(
-        knowledgeBase = KnowledgeBaseLoader.load(context),
+        knowledgeBase = knowledgeBase,
         llm = llmAssistant
     )
 

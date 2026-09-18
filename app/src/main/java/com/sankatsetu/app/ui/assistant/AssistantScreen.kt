@@ -1,5 +1,7 @@
 package com.sankatsetu.app.ui.assistant
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -7,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,6 +27,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Description
@@ -35,19 +40,59 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
+import com.sankatsetu.app.assistant.KnowledgeChunk
+
+/** Which layer of the Docs browser is showing, if any — see [DocsBrowser]. Back (system or app bar) steps down one level instead of leaving the tab. */
+private sealed class DocsView {
+    data object Closed : DocsView()
+    data object List : DocsView()
+    data class Reading(val source: String) : DocsView()
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AssistantScreen(viewModel: AssistantViewModel) {
+fun AssistantScreen(viewModel: AssistantViewModel, knowledgeBase: List<KnowledgeChunk>) {
     val state by viewModel.uiState.collectAsState()
     var draft by remember { mutableStateOf("") }
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var docsView by remember { mutableStateOf<DocsView>(DocsView.Closed) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Assistant") }) }) { padding ->
+    BackHandler(enabled = docsView is DocsView.Reading) { docsView = DocsView.List }
+    BackHandler(enabled = docsView is DocsView.List) { docsView = DocsView.Closed }
+
+    if (docsView != DocsView.Closed) {
+        DocsBrowser(
+            knowledgeBase = knowledgeBase,
+            view = docsView,
+            onOpen = { source -> docsView = DocsView.Reading(source) },
+            onBack = { docsView = if (docsView is DocsView.Reading) DocsView.List else DocsView.Closed }
+        )
+        return
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Assistant") },
+                actions = {
+                    IconButton(onClick = { docsView = DocsView.List }) {
+                        Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Browse offline guides")
+                    }
+                }
+            )
+        }
+    ) { padding ->
     Column(Modifier.padding(padding).fillMaxSize()) {
         if (state.turns.isEmpty()) {
+            // weight(1f), not fillMaxSize(): a fillMaxSize() sibling claims
+            // the whole Column's height, leaving nothing for the input Row
+            // below it — real-device screenshot found this pushing the
+            // question field and send button off the bottom of the screen
+            // entirely, hidden under the app's own nav bar.
             Column(
-                Modifier.fillMaxSize().padding(24.dp),
+                Modifier.weight(1f).fillMaxWidth().padding(24.dp),
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
@@ -78,7 +123,17 @@ fun AssistantScreen(viewModel: AssistantViewModel) {
                 value = draft,
                 onValueChange = { draft = it },
                 modifier = Modifier.weight(1f),
-                placeholder = { Text("Ask something…") }
+                placeholder = { Text("Ask something…") },
+                keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
+                keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                    onSend = {
+                        if (draft.isNotBlank()) {
+                            viewModel.ask(draft.trim())
+                            draft = ""
+                        }
+                        keyboardController?.hide()
+                    }
+                )
             )
             Spacer(Modifier.width(8.dp))
             IconButton(
@@ -87,6 +142,7 @@ fun AssistantScreen(viewModel: AssistantViewModel) {
                         viewModel.ask(draft.trim())
                         draft = ""
                     }
+                    keyboardController?.hide()
                 },
                 enabled = draft.isNotBlank()
             ) {
@@ -106,7 +162,10 @@ private fun TurnCard(turn: AssistantTurn) {
                 Text(turn.question, Modifier.padding(10.dp))
             }
         }
-        Spacer(Modifier.width(4.dp))
+        // height, not width — this is a vertical gap in a Column; the
+        // previous width-only Spacer had zero height and did nothing,
+        // leaving the question and answer bubbles visually touching.
+        Spacer(Modifier.height(8.dp))
         turn.answer?.let { answer ->
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp)) {
@@ -122,7 +181,7 @@ private fun TurnCard(turn: AssistantTurn) {
                     // icon rather than a colored border-left — craft-floor
                     // guidance bans that pattern as a decorative habit, and
                     // an icon plus label reads clearly without it.
-                    Spacer(Modifier.padding(top = 2.dp))
+                    Spacer(Modifier.height(6.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             if (turn.wasGenerated) Icons.Filled.AutoAwesome else Icons.Filled.Description,
@@ -147,5 +206,90 @@ private fun ThinkingIndicator() {
     Row(verticalAlignment = Alignment.CenterVertically) {
         CircularProgressIndicator(Modifier.padding(end = 8.dp))
         Text("Thinking…", style = MaterialTheme.typography.labelSmall)
+    }
+}
+
+/**
+ * Lets the person read the offline knowledge base directly, not just
+ * through a generated answer — the same guides the Assistant already
+ * grounds its answers in, browsable on their own. Two levels: a list of
+ * documents ([DocsView.List]), then one document's sections stacked and
+ * scrollable ([DocsView.Reading]). Back (system, gesture, or the app bar's
+ * arrow) steps down one level via the [BackHandler]s in [AssistantScreen],
+ * never straight out of the tab.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DocsBrowser(
+    knowledgeBase: List<KnowledgeChunk>,
+    view: DocsView,
+    onOpen: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    // Preserves each document's on-disk order (chunk id embeds a
+    // sequential index — see KnowledgeDocumentParser) and the order
+    // documents were first seen, rather than re-sorting alphabetically.
+    val bySource = remember(knowledgeBase) { knowledgeBase.groupBy { it.source } }
+    val titles = remember(bySource) { bySource.keys.toList() }
+    val title = when (view) {
+        is DocsView.Reading -> view.source
+        else -> "Offline Guides"
+    }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text(title) },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        when (view) {
+            is DocsView.Reading -> {
+                val sections = bySource[view.source].orEmpty()
+                LazyColumn(
+                    Modifier.padding(padding).fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(20.dp)
+                ) {
+                    items(sections, key = { it.id }) { chunk ->
+                        Column {
+                            Text(chunk.section, style = MaterialTheme.typography.titleLarge)
+                            Spacer(Modifier.height(6.dp))
+                            Text(chunk.text, style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+            }
+            else -> {
+                LazyColumn(
+                    Modifier.padding(padding).fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(titles) { source ->
+                        val sectionCount = bySource[source]?.size ?: 0
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(onClick = { onOpen(source) })
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                                Text(source, style = MaterialTheme.typography.bodyLarge)
+                                Text(
+                                    "$sectionCount ${if (sectionCount == 1) "section" else "sections"}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

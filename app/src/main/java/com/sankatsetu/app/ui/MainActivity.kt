@@ -5,8 +5,10 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
@@ -97,7 +99,8 @@ class MainActivity : ComponentActivity() {
                         identity = app.container.identity,
                         router = app.container.messageRouter,
                         peerDao = app.container.database.peerDao(),
-                        messageDao = app.container.database.messageDao()
+                        messageDao = app.container.database.messageDao(),
+                        nicknameStore = app.container.nicknameStore
                     ) as T
                 }
             }
@@ -142,6 +145,16 @@ class MainActivity : ComponentActivity() {
                     var openThreadPeerId by remember { mutableStateOf<String?>(null) }
                     val chatState by chatViewModel.uiState.collectAsState()
 
+                    // System Back / edge-swipe must never exit the app out
+                    // from under an open thread or a non-home tab — it
+                    // should step back one level at a time, same as every
+                    // other Android app. Order matters: an open thread
+                    // closes first, then a non-Chat tab returns to Chat,
+                    // then (nothing left to intercept) the system's own
+                    // default finishes the Activity.
+                    BackHandler(enabled = openThreadPeerId != null) { openThreadPeerId = null }
+                    BackHandler(enabled = openThreadPeerId == null && currentTab != Tab.CHAT) { currentTab = Tab.CHAT }
+
                     Scaffold(
                         bottomBar = {
                             NavigationBar {
@@ -156,7 +169,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     ) { padding ->
-                        Surface(Modifier.padding(padding)) {
+                        Surface(Modifier.padding(padding).fillMaxSize()) {
                             when (currentTab) {
                                 Tab.CHAT -> {
                                     val thread = openThreadPeerId?.let { id -> chatState.peers.find { it.peerIdBase64 == id } }
@@ -167,7 +180,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 Tab.PAY -> PayScreen(viewModel = payViewModel)
-                                Tab.ASSISTANT -> AssistantScreen(viewModel = assistantViewModel)
+                                Tab.ASSISTANT -> AssistantScreen(viewModel = assistantViewModel, knowledgeBase = app.container.knowledgeBase)
                             }
                         }
                     }

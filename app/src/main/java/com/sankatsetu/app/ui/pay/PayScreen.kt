@@ -14,8 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -42,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.data.IouEntity
 import com.sankatsetu.app.payments.UssdDialer
+import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
 import com.sankatsetu.app.ui.theme.SankatSetuColors
 
 /**
@@ -242,40 +241,33 @@ private fun EmptySectionText(text: String) {
     Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 }
 
+/**
+ * Status reads as one monospace readout, colored by the same IMD scale as
+ * the Chat tab's signal bars — a settled IOU and a ready peer share the
+ * same green because both mean "no action needed," a pending IOU shares
+ * caution-orange with anything else in the app that means "handle this
+ * soon." One vocabulary, not a per-screen palette. See
+ * docs/adr/0014-field-radio-design-language.md.
+ */
 @Composable
 private fun IouCard(iou: IouEntity, onMarkSettled: (() -> Unit)? = null) {
+    val (tint, statusWord) = when (iou.status) {
+        "settled" -> SankatSetuColors.ImdGreen to "SETTLED"
+        "rejected" -> SankatSetuColors.ImdRed to "REJECTED"
+        else -> SankatSetuColors.ImdOrange to "PENDING"
+    }
     Card(Modifier.fillMaxWidth()) {
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Box(
-                Modifier.width(10.dp).height(10.dp).background(
-                    color = when (iou.status) {
-                        "settled" -> SankatSetuColors.SafeGreen
-                        "rejected" -> SankatSetuColors.CrisisRed
-                        else -> SankatSetuColors.CautionAmber
-                    },
-                    shape = CircleShape
-                )
-            )
-            Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("₹${"%.2f".format(iou.amountPaise / 100.0)} — ${iou.counterpartyNickname}", style = MaterialTheme.typography.bodyLarge)
                 if (iou.memo.isNotBlank()) {
                     Text(iou.memo, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                StatusBadge(iou.status)
+                Text(statusWord, style = ConsoleReadoutStyle, color = tint, modifier = Modifier.padding(top = 2.dp))
             }
             if (onMarkSettled != null && iou.status == "pending") {
                 OutlinedButton(onClick = onMarkSettled) { Text("Mark paid") }
             }
         }
-    }
-}
-
-@Composable
-private fun StatusBadge(status: String) {
-    Box(
-        Modifier.background(SankatSetuColors.HopBadgeBackground, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 2.dp)
-    ) {
-        Text(status.replaceFirstChar { it.uppercase() }, style = MaterialTheme.typography.labelSmall)
     }
 }

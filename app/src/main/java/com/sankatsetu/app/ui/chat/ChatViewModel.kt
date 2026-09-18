@@ -8,6 +8,7 @@ import com.sankatsetu.app.data.MessageEntity
 import com.sankatsetu.app.data.PeerDao
 import com.sankatsetu.app.data.PeerEntity
 import com.sankatsetu.app.mesh.crypto.Identity
+import com.sankatsetu.app.mesh.crypto.NicknameStore
 import com.sankatsetu.app.mesh.crypto.NoiseSession
 import com.sankatsetu.app.mesh.protocol.AnnouncementPacket
 import com.sankatsetu.app.mesh.protocol.MeshPacket
@@ -61,10 +62,9 @@ class ChatViewModel(
     private val identity: Identity,
     private val router: MessageRouter,
     private val peerDao: PeerDao,
-    private val messageDao: MessageDao
+    private val messageDao: MessageDao,
+    private val nicknameStore: NicknameStore
 ) : ViewModel() {
-
-    private val nickname: String = "builder-${identity.peerId.take(2).joinToString("") { "%02x".format(it) }}"
 
     // One Noise session per peer we've ever started a handshake with.
     private val sessions = ConcurrentHashMap<String, NoiseSession>()
@@ -142,12 +142,23 @@ class ChatViewModel(
 
     private suspend fun sendAnnounce() {
         val packet = AnnouncementPacket(
-            nickname = nickname,
+            nickname = nicknameStore.get(),
             noisePublicKey = identity.noisePublicKey,
             signingPublicKey = identity.signingPublicKeyBytes()
         )
         val encoded = packet.encode() ?: return
         router.broadcast(MessageType.ANNOUNCE, encoded, sign = true)
+    }
+
+    fun selfNickname(): String = nicknameStore.get()
+
+    /** The OS Bluetooth device name, offered as a rename suggestion only — see [NicknameStore]'s doc for why it's never applied automatically. */
+    fun deviceBluetoothName(): String? = nicknameStore.deviceBluetoothName()
+
+    /** Renames this device's own broadcast identity and re-announces immediately, instead of waiting for the next scheduled cycle. */
+    fun renameSelf(newNickname: String) {
+        nicknameStore.set(newNickname)
+        viewModelScope.launch { sendAnnounce() }
     }
 
     private suspend fun observeInbound() {
@@ -292,39 +303,57 @@ class ChatViewModel(
     }
 
     fun sendMessage(peerIdBase64: String, text: String) {
+        viewModelScope.launch { sendToPeer(peerIdBase64, text) }
+    }
+
+    /**
+     * One-tap broadcast to every peer with an established session — the
+     * American Red Cross "I'm Safe" pattern (docs/PRODUCT.md, Evidence on
+     * Hand): the single most load-bearing feature in that research for
+     * panic-state cognitive load, so it goes out as an ordinary message to
+     * every ready thread rather than a new wire message type — one tap,
+     * no typing required. See docs/adr/0014-field-radio-design-language.md.
+     */
+    fun broadcastImSafe() {
         viewModelScope.launch {
-            val session = sessions[peerIdBase64]
-            if (session == null || !session.isEstablished) return@launch // UI should disable send until handshake completes
-
-            val privateMessage = PrivateMessagePacket(content = text)
-            val encoded = privateMessage.encode() ?: return@launch
-            val plaintext = byteArrayOf(EnvelopeKind.TEXT) + encoded
-            val ciphertext = session.encrypt(plaintext) ?: return@launch
-            val remotePeerId = Base64.decode(peerIdBase64, Base64.NO_WRAP)
-
-            val now = System.currentTimeMillis()
-            messageDao.insert(
-                MessageEntity(
-                    messageId = privateMessage.messageId,
-                    threadPeerIdBase64 = peerIdBase64,
-                    senderPeerIdBase64 = Base64.encodeToString(identity.peerId, Base64.NO_WRAP),
-                    body = text,
-                    sentAt = now,
-                    receivedAt = now,
-                    hopCount = 0,
-                    status = "sending",
-                    isOutgoing = true
-                )
-            )
-
-            val outcome = router.sendDirected(MessageType.NOISE_ENCRYPTED, remotePeerId, ciphertext)
-            // Honest status: "sent" only if it actually left over a live
-            // link right now. If there was no link at all, it's sitting in
-            // the outbox — say so instead of falsely claiming "sent" (the
-            // bug that made a queued-while-disconnected message look
-            // identical to a delivered one).
-            messageDao.updateStatus(privateMessage.messageId, if (outcome.queued) "queued" else "sent")
+            sessions.filterValues { it.isEstablished }.keys.forEach { peerIdBase64 ->
+                sendToPeer(peerIdBase64, "I'm safe.")
+            }
         }
+    }
+
+    private suspend fun sendToPeer(peerIdBase64: String, text: String) {
+        val session = sessions[peerIdBase64]
+        if (session == null || !session.isEstablished) return // UI should disable send until handshake completes
+
+        val privateMessage = PrivateMessagePacket(content = text)
+        val encoded = privateMessage.encode() ?: return
+        val plaintext = byteArrayOf(EnvelopeKind.TEXT) + encoded
+        val ciphertext = session.encrypt(plaintext) ?: return
+        val remotePeerId = Base64.decode(peerIdBase64, Base64.NO_WRAP)
+
+        val now = System.currentTimeMillis()
+        messageDao.insert(
+            MessageEntity(
+                messageId = privateMessage.messageId,
+                threadPeerIdBase64 = peerIdBase64,
+                senderPeerIdBase64 = Base64.encodeToString(identity.peerId, Base64.NO_WRAP),
+                body = text,
+                sentAt = now,
+                receivedAt = now,
+                hopCount = 0,
+                status = "sending",
+                isOutgoing = true
+            )
+        )
+
+        val outcome = router.sendDirected(MessageType.NOISE_ENCRYPTED, remotePeerId, ciphertext)
+        // Honest status: "sent" only if it actually left over a live
+        // link right now. If there was no link at all, it's sitting in
+        // the outbox — say so instead of falsely claiming "sent" (the
+        // bug that made a queued-while-disconnected message look
+        // identical to a delivered one).
+        messageDao.updateStatus(privateMessage.messageId, if (outcome.queued) "queued" else "sent")
     }
 
     /** Removes a peer from local history — see [PeerDao.delete]'s doc for why this exists. Does not affect the peer's own device. */
