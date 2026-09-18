@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -25,13 +26,17 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Payments
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,9 +45,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.assistant.KnowledgeChunk
+import com.sankatsetu.app.assistant.SuggestedAction
 
 /** Which layer of the Docs browser is showing, if any — see [DocsBrowser]. Back (system or app bar) steps down one level instead of leaving the tab. */
 private sealed class DocsView {
@@ -53,7 +61,12 @@ private sealed class DocsView {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AssistantScreen(viewModel: AssistantViewModel, knowledgeBase: List<KnowledgeChunk>) {
+fun AssistantScreen(
+    viewModel: AssistantViewModel,
+    knowledgeBase: List<KnowledgeChunk>,
+    onBroadcastSafe: () -> Unit,
+    onOpenPay: () -> Unit
+) {
     val state by viewModel.uiState.collectAsState()
     var draft by remember { mutableStateOf("") }
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -108,7 +121,14 @@ fun AssistantScreen(viewModel: AssistantViewModel, knowledgeBase: List<Knowledge
                 contentPadding = PaddingValues(12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                items(state.turns, key = { it.id }) { turn -> TurnCard(turn) }
+                items(state.turns, key = { it.id }) { turn ->
+                    TurnCard(
+                        turn = turn,
+                        onBroadcastSafe = onBroadcastSafe,
+                        onOpenPay = onOpenPay,
+                        onDraftRequest = { viewModel.requestDraft(turn.id) }
+                    )
+                }
                 if (state.isThinking) {
                     item { ThinkingIndicator() }
                 }
@@ -153,8 +173,21 @@ fun AssistantScreen(viewModel: AssistantViewModel, knowledgeBase: List<Knowledge
     }
 }
 
+/**
+ * [turn.suggestedAction] and the draft-message flow are the agent's two
+ * further stages beyond a plain answer — see
+ * docs/adr/0016-on-device-agent-architecture.md. Neither ever fires on its
+ * own: an action chip only calls [onBroadcastSafe]/[onOpenPay] on an
+ * explicit tap, and a draft is only generated when the person asks for one.
+ */
 @Composable
-private fun TurnCard(turn: AssistantTurn) {
+private fun TurnCard(
+    turn: AssistantTurn,
+    onBroadcastSafe: () -> Unit,
+    onOpenPay: () -> Unit,
+    onDraftRequest: () -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
     Column(Modifier.fillMaxWidth()) {
         // The question, right-aligned like an outgoing chat bubble.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -195,7 +228,51 @@ private fun TurnCard(turn: AssistantTurn) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+
+                    if (turn.wasGenerated && turn.suggestedAction != SuggestedAction.NONE) {
+                        Spacer(Modifier.height(8.dp))
+                        when (turn.suggestedAction) {
+                            SuggestedAction.BROADCAST_SAFE -> AssistChip(
+                                onClick = onBroadcastSafe,
+                                label = { Text("Broadcast \"I'm safe\" now") },
+                                leadingIcon = { Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            SuggestedAction.OPEN_PAY -> AssistChip(
+                                onClick = onOpenPay,
+                                label = { Text("Open Pay tab") },
+                                leadingIcon = { Icon(Icons.Filled.Payments, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                            )
+                            SuggestedAction.NONE -> Unit
+                        }
+                    }
+
+                    if (turn.wasGenerated) {
+                        Spacer(Modifier.height(4.dp))
+                        when {
+                            turn.draft != null -> DraftedMessageCard(draft = turn.draft, onCopy = { clipboard.setText(AnnotatedString(turn.draft)) })
+                            turn.isDrafting -> Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(14.dp).padding(end = 6.dp))
+                                Text("Drafting a message to share…", style = MaterialTheme.typography.labelSmall)
+                            }
+                            else -> TextButton(onClick = onDraftRequest, contentPadding = PaddingValues(0.dp)) {
+                                Text("Draft a message to share")
+                            }
+                        }
+                    }
                 }
+            }
+        }
+    }
+}
+
+/** The agent's drafted message, with a one-tap copy — no auto-send; the person decides where it goes (paste into any Chat thread). */
+@Composable
+private fun DraftedMessageCard(draft: String, onCopy: () -> Unit) {
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(draft, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+            IconButton(onClick = onCopy) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy message")
             }
         }
     }

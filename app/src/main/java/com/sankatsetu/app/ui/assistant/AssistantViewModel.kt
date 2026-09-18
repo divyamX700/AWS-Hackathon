@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.sankatsetu.app.assistant.AssistantEngine
 import com.sankatsetu.app.assistant.AssistantExchange
 import com.sankatsetu.app.assistant.AssistantSource
+import com.sankatsetu.app.assistant.SuggestedAction
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -15,7 +16,11 @@ data class AssistantTurn(
     val question: String,
     val answer: String? = null, // null while the answer is still being computed
     val sources: List<AssistantSource> = emptyList(),
-    val wasGenerated: Boolean = false
+    val wasGenerated: Boolean = false,
+    val suggestedAction: SuggestedAction = SuggestedAction.NONE,
+    /** null = not drafted yet, "" while drafting, non-empty = the drafted message. See [AssistantViewModel.requestDraft]. */
+    val draft: String? = null,
+    val isDrafting: Boolean = false
 )
 
 data class AssistantUiState(
@@ -60,10 +65,39 @@ class AssistantViewModel(private val engine: AssistantEngine) : ViewModel() {
             val result = engine.answer(question, history)
             val updatedTurns = _uiState.value.turns.map {
                 if (it.id == turn.id) {
-                    it.copy(answer = result.text, sources = result.sources, wasGenerated = result.wasGenerated)
+                    it.copy(
+                        answer = result.text,
+                        sources = result.sources,
+                        wasGenerated = result.wasGenerated,
+                        suggestedAction = result.suggestedAction
+                    )
                 } else it
             }
             _uiState.value = _uiState.value.copy(turns = updatedTurns, isThinking = false)
+        }
+    }
+
+    /**
+     * The agent's second stage, run only on request (see AssistantEngine's
+     * doc for why it's not folded into [ask]'s own call): drafts a short
+     * message the person could send over the mesh, from a completed turn.
+     */
+    fun requestDraft(turnId: String) {
+        val turn = _uiState.value.turns.find { it.id == turnId } ?: return
+        val answer = turn.answer ?: return
+        if (turn.isDrafting || turn.draft != null) return
+
+        _uiState.value = _uiState.value.copy(
+            turns = _uiState.value.turns.map { if (it.id == turnId) it.copy(isDrafting = true) else it }
+        )
+
+        viewModelScope.launch {
+            val drafted = engine.draftShareableMessage(turn.question, answer) ?: turn.question
+            _uiState.value = _uiState.value.copy(
+                turns = _uiState.value.turns.map {
+                    if (it.id == turnId) it.copy(isDrafting = false, draft = drafted) else it
+                }
+            )
         }
     }
 }

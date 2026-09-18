@@ -180,7 +180,12 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                                 Tab.PAY -> PayScreen(viewModel = payViewModel)
-                                Tab.ASSISTANT -> AssistantScreen(viewModel = assistantViewModel, knowledgeBase = app.container.knowledgeBase)
+                                Tab.ASSISTANT -> AssistantScreen(
+                                    viewModel = assistantViewModel,
+                                    knowledgeBase = app.container.knowledgeBase,
+                                    onBroadcastSafe = { chatViewModel.broadcastImSafe() },
+                                    onOpenPay = { currentTab = Tab.PAY }
+                                )
                             }
                         }
                     }

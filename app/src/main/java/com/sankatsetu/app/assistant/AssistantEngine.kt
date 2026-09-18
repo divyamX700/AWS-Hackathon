@@ -6,11 +6,20 @@ data class AssistantSource(val source: String, val section: String, val text: St
 /** One prior question+answer, for multi-turn context — see [AssistantEngine.answer]. */
 data class AssistantExchange(val question: String, val answer: String)
 
+/**
+ * A real, already-built app action the agent decided is worth offering —
+ * never auto-fired; the UI always asks the person to confirm. See
+ * docs/adr/0016-on-device-agent-architecture.md for why only these two
+ * exist: they're the only two non-chat actions the app actually has today.
+ */
+enum class SuggestedAction { NONE, BROADCAST_SAFE, OPEN_PAY }
+
 data class AssistantAnswer(
     val text: String,
     val sources: List<AssistantSource>,
     /** True if [text] came from the LLM; false if it's the extractive fallback (top retrieved passage verbatim). */
-    val wasGenerated: Boolean
+    val wasGenerated: Boolean,
+    val suggestedAction: SuggestedAction = SuggestedAction.NONE
 )
 
 private const val FALLBACK_NO_MATCH =
@@ -21,15 +30,40 @@ private const val EMERGENCY_NUMBER_REMINDER = "\n\nCall 112 immediately if this 
 /** How many prior exchanges to carry into the prompt — kept small on purpose, see [AssistantEngine.buildPrompt]. */
 private const val MAX_HISTORY_TURNS = 2
 
+private val ACTION_LINE = Regex("(?m)^Action:\\s*(NONE|BROADCAST_SAFE|OPEN_PAY)\\s*$")
+
+// A real-device generation echoed the prompt's own "Action rule:" heading
+// as a literal line in the visible answer (the format's "Action:" line and
+// the explanatory "Action rule:" heading share a first word, and this
+// small model occasionally confuses the two). The prompt wording now tells
+// it not to, which should make this rare — but stripping the line
+// defensively costs nothing and means a slip never reaches the screen.
+private val STRAY_ACTION_RULE_LINE = Regex("(?m)^Action rule:.*$\\n?")
+
 /**
- * Retrieval-augmented answering: [KnowledgeRetriever] finds relevant
- * passages, [llm] turns them into a structured, synthesized answer — not a
- * dump of the raw retrieved text. [MediaPipeLlmAssistant] already retries a
- * bad/empty sample once before giving up (see its doc), so the extractive
- * fallback here is for the case that's actually undegradable: no model
- * side-loaded at all, or the device's second attempt still failing. That
- * fallback is never silent — [AssistantAnswer.wasGenerated] tells the UI
- * exactly which happened, and `AssistantScreen.kt` labels it visibly.
+ * A real-device generation was observed starting with a literal two-char
+ * `\n` (backslash, then n) instead of an actual line break — this small
+ * model occasionally emits the escape-sequence text rather than a real
+ * newline byte. Compose's Text() correctly does not interpret escape
+ * sequences in a runtime string, so left alone this renders as a visible
+ * stray "\n" glyph. Converting it back to a real newline is a cheap,
+ * harmless normalization regardless of why the model did it.
+ */
+private fun String.normalizeLiteralNewlines(): String = replace("\\n", "\n")
+
+/**
+ * Retrieval-augmented, single-call agent: one on-device generation does
+ * triage (is a real app action warranted), grounding (the existing
+ * [KnowledgeRetriever] search), and drafting (the structured guide itself)
+ * together — see docs/adr/0016-on-device-agent-architecture.md for why this
+ * is one call, not three round-trips, and what "the agentic architecture"
+ * means for a 1B on-device model where every extra call costs 12-20s.
+ * [MediaPipeLlmAssistant] already retries a bad/empty sample once before
+ * giving up (see its doc), so the extractive fallback here is for the case
+ * that's actually undegradable: no model side-loaded at all, or the
+ * device's second attempt still failing. That fallback is never silent —
+ * [AssistantAnswer.wasGenerated] tells the UI exactly which happened, and
+ * `AssistantScreen.kt` labels it visibly.
  */
 class AssistantEngine(
     private val knowledgeBase: List<KnowledgeChunk>,
@@ -46,9 +80,30 @@ class AssistantEngine(
 
         if (llm.isAvailable) {
             val prompt = buildPrompt(query, matches.map { it.chunk }, history)
-            val generated = llm.generate(prompt)?.trim()
-            if (!generated.isNullOrEmpty()) {
-                return AssistantAnswer(generated, sources, wasGenerated = true)
+            // A real-device test tried an outer retry here for a missing
+            // Action line, and found a worse bug: MediaPipeLlmAssistant's
+            // own generate() is ALREADY a length-gated retry loop (see its
+            // doc), so one outer retry here authorized up to 4 total
+            // on-device generations for a single question — one real query
+            // measured 86 seconds end to end. Reordering the Action line to
+            // the FRONT of the format (see buildPrompt) is what actually
+            // fixes the truncation this was trying to work around, so a
+            // second, separate retry layer here was solving an
+            // already-solved problem at real latency cost. A missing or
+            // malformed Action line now just reads as NONE — see the
+            // "defaults to NONE" test — same as any other format slip.
+            val raw = llm.generate(prompt)?.trim()?.normalizeLiteralNewlines()
+            if (!raw.isNullOrEmpty()) {
+                val action = ACTION_LINE.find(raw)?.groupValues?.get(1)
+                    ?.let { runCatching { SuggestedAction.valueOf(it) }.getOrDefault(SuggestedAction.NONE) }
+                    ?: SuggestedAction.NONE
+                // .trim(), not .trimEnd(): the Action line is now the
+                // FIRST line (see buildPrompt — moving it there is what
+                // fixed a real truncation bug, see docs/adr/0016's update),
+                // so stripping it leaves a leading blank line to clean up
+                // too, not just a trailing one.
+                val text = raw.replace(ACTION_LINE, "").replace(STRAY_ACTION_RULE_LINE, "").trim()
+                return AssistantAnswer(text, sources, wasGenerated = true, suggestedAction = action)
             }
         }
 
@@ -56,20 +111,48 @@ class AssistantEngine(
         // Not as useful as a synthesized guide, but never fabricates
         // anything beyond what's actually in the knowledge base — and the
         // UI marks this state visibly rather than presenting it as if it
-        // were a real generated answer.
+        // were a real generated answer. No action suggestion here: that
+        // judgment call needs the model, not a raw passage.
         val best = matches.first().chunk
         return AssistantAnswer(best.text + EMERGENCY_NUMBER_REMINDER, sources, wasGenerated = false)
     }
 
     /**
+     * The second agent stage: drafts a short message the person could send
+     * over the mesh, from a completed turn — a deliberately separate,
+     * explicit call (the UI only fires this when the person taps "Draft a
+     * message to share" on an answer), not run eagerly on every question.
+     * Merging it into [answer]'s own call would double that call's latency
+     * for a feature most questions never use; see docs/adr/0016.
+     */
+    suspend fun draftShareableMessage(question: String, answer: String): String? {
+        if (!llm.isAvailable) return null
+        val prompt = """
+            |Instruction: Write ONE short message (max 2 sentences, plain language) this
+            |person could send to a family member over a text or chat app, summarizing
+            |their situation and what they're doing about it. Base it only on the
+            |question and guidance below — do not invent facts, names, or locations not
+            |present in them. Output only the message itself, nothing else.
+            |
+            |Question: $question
+            |Guidance given: $answer
+            |
+            |Message:
+        """.trimMargin()
+        return llm.generate(prompt)?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
+    /**
      * Asks for a short structured guide — situation + numbered steps + what
      * to avoid + the 112 reminder — synthesized from the context in the
-     * model's own words, not the raw retrieved passages pasted back. Early
-     * testing (see docs/adr/0011's update) showed this small model reliably
-     * *completes* this format rather than trailing off, likely because a
-     * numbered list gives it a concrete continuation pattern to follow —
-     * whereas an open-ended "write a paragraph" instruction is exactly what
-     * produced short, cut-off answers before.
+     * model's own words, not the raw retrieved passages pasted back, PLUS
+     * one triage/action line the app parses out before showing the text
+     * (see [ACTION_LINE]). Early testing (see docs/adr/0011's update)
+     * showed this small model reliably *completes* this format rather than
+     * trailing off, likely because a numbered list gives it a concrete
+     * continuation pattern to follow — whereas an open-ended "write a
+     * paragraph" instruction is exactly what produced short, cut-off
+     * answers before.
      *
      * History is capped at [MAX_HISTORY_TURNS] prior exchanges, kept short:
      * this model's `.task` bundle has a 1280-token KV cache shared across
@@ -96,6 +179,7 @@ class AssistantEngine(
             |completely offline. Answer the new question as a short practical guide, in your own
             |words — do not copy text verbatim. Format your answer EXACTLY like this, and nothing
             |more:
+            |Action: NONE, BROADCAST_SAFE, or OPEN_PAY — write this line FIRST, see rule below.
             |Situation: one short sentence on what this is.
             |1. First action step.
             |2. Next action step.
@@ -103,19 +187,18 @@ class AssistantEngine(
             |Avoid: one short line on what not to do, only if the context mentions one.
             |Always call 112 immediately for a life-threatening emergency.
             |
-            |Hard rules: base every fact ONLY on the "Context passages" below — they are the sole
-            |source of truth for the new question. The "Conversation so far" section, if present,
-            |is ONLY for understanding what a pronoun or follow-up phrase like "for a child" or
-            |"what about her" refers to — never pull facts, symptoms, or treatments from it. If
-            |the new question is about a different situation than the conversation so far (for
-            |example, the topic changed from a snake bite to a burn), ignore the previous answer's
-            |specific details entirely and answer fresh from the context passages only. Write AT
-            |MOST 3 numbered steps, never more, even if the context has more detail available —
-            |pick only the 3 most important actions. Stop writing immediately after the 112 line;
-            |do not add a 4th step, do not add extra advice, do not repeat yourself, do not invent
-            |anything not grounded in the context passages (for example, never suggest a specific
-            |medicine or dose unless the context explicitly names it). If the context passages do
-            |not answer the new question, say so plainly in one line instead of guessing.
+            |When to write each Action value: BROADCAST_SAFE only if the question says the danger
+            |already passed (e.g. "the bleeding stopped"). OPEN_PAY only if the question is about
+            |paying for something. Otherwise NONE — correct for almost every question. Do not
+            |write the words "Action rule" anywhere in your answer — "Action:" is only the format
+            |line at the very top.
+            |
+            |Hard rules: base every fact ONLY on the Context passages below. The Conversation so
+            |far, if present, is ONLY for resolving a pronoun or follow-up like "for a child" —
+            |never a source of facts; if the new question is a different situation, ignore the
+            |prior answer entirely. AT MOST 3 numbered steps, never more. Never invent a medicine,
+            |dose, or fact not in the context. If the context does not answer the question, say so
+            |in one line instead of guessing.
             |
             |$historyBlock|Context passages (the only source of facts for the new question):
             |$context

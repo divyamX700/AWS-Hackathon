@@ -22,6 +22,17 @@ class AssistantEngineTest {
         override suspend fun generate(prompt: String): String? = response
     }
 
+    /** Counts calls — for asserting [AssistantEngine.answer] never retries the on-device generation itself. */
+    private class CountingFakeLlm(private val response: String?) : LlmAssistant {
+        override val isAvailable: Boolean = true
+        var callCount = 0
+            private set
+        override suspend fun generate(prompt: String): String? {
+            callCount++
+            return response
+        }
+    }
+
     @Test
     fun `no model available falls back to the extractive top match`() = runTest {
         val engine = AssistantEngine(chunks, llm = UnavailableLlmAssistant)
@@ -60,5 +71,84 @@ class AssistantEngineTest {
         assertFalse(answer.wasGenerated)
         assertTrue(answer.text.contains("112"))
         assertTrue(answer.sources.isEmpty())
+    }
+
+    @Test
+    fun `an Action line is parsed out of the answer text and into suggestedAction`() = runTest {
+        val engine = AssistantEngine(
+            chunks,
+            llm = FakeLlm(available = true, response = "Press hard on the wound. Call 112.\nAction: BROADCAST_SAFE")
+        )
+        val answer = engine.answer("the bleeding stopped, what now")
+
+        assertEquals(SuggestedAction.BROADCAST_SAFE, answer.suggestedAction)
+        assertEquals("Press hard on the wound. Call 112.", answer.text) // Action line stripped, not shown to the user
+    }
+
+    @Test
+    fun `a missing or malformed Action line defaults to NONE`() = runTest {
+        val engine = AssistantEngine(chunks, llm = FakeLlm(available = true, response = "Press hard on the wound."))
+        val answer = engine.answer("how do I stop bleeding")
+
+        assertEquals(SuggestedAction.NONE, answer.suggestedAction)
+    }
+
+    @Test
+    fun `a missing Action line does not trigger a retry generation`() = runTest {
+        // MediaPipeLlmAssistant.generate() is already its own length-gated
+        // retry loop (see its doc); AssistantEngine used to add a second,
+        // outer retry here for a missing Action line, and a real-device
+        // test found the two compounding into up to 4 total on-device
+        // generations for one question (86s measured). This asserts that
+        // regression stays fixed: exactly one call, ever, from here.
+        val fakeLlm = CountingFakeLlm("1. Apply pressure.\n2. Keep applying pressure.") // no Action line
+        val engine = AssistantEngine(chunks, llm = fakeLlm)
+
+        val answer = engine.answer("the bleeding stopped, what now")
+
+        assertEquals(1, fakeLlm.callCount)
+        assertEquals(SuggestedAction.NONE, answer.suggestedAction)
+    }
+
+    @Test
+    fun `a literal backslash-n in the model output is normalized to a real newline`() = runTest {
+        val engine = AssistantEngine(
+            chunks,
+            llm = FakeLlm(available = true, response = "Action: NONE\nSituation: bleeding.\\n1. Apply pressure.")
+        )
+        val answer = engine.answer("how do I stop bleeding")
+
+        assertFalse(answer.text.contains("\\n")) // no literal backslash-n left in the displayed text
+        assertTrue(answer.text.contains("Situation: bleeding.\n1. Apply pressure.")) // became a real line break instead
+    }
+
+    @Test
+    fun `a stray Action rule line echoed by the model is stripped from the displayed text`() = runTest {
+        // Real-device generation: the model echoed the prompt's own
+        // "Action rule:" heading as a visible answer line instead of the
+        // required "Action:" format line, because both start with the
+        // same word. The prompt now tells it not to, but this is a
+        // defensive strip in case a small model slips anyway.
+        val engine = AssistantEngine(
+            chunks,
+            llm = FakeLlm(available = true, response = "Action: NONE\n1. Apply pressure.\nAction rule: BROADCAST_SAFE")
+        )
+        val answer = engine.answer("the bleeding stopped, what now")
+
+        assertFalse(answer.text.contains("Action rule"))
+        assertEquals(SuggestedAction.NONE, answer.suggestedAction) // the real Action: line, not the stray one
+    }
+
+    @Test
+    fun `draftShareableMessage returns null when no model is available`() = runTest {
+        val engine = AssistantEngine(chunks, llm = UnavailableLlmAssistant)
+        assertEquals(null, engine.draftShareableMessage("how do I stop bleeding", "Press hard on the wound."))
+    }
+
+    @Test
+    fun `draftShareableMessage returns the model's drafted text when available`() = runTest {
+        val engine = AssistantEngine(chunks, llm = FakeLlm(available = true, response = "I'm okay, treating a cut, will update you."))
+        val draft = engine.draftShareableMessage("how do I stop bleeding", "Press hard on the wound.")
+        assertEquals("I'm okay, treating a cut, will update you.", draft)
     }
 }
