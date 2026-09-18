@@ -35,3 +35,7 @@ gateway/.env
 # Docker volumes
 gateway/.localstack/
 gateway/opensearch-data/
+
+# Agent-local config, not project source
+.claude/
+.codex/

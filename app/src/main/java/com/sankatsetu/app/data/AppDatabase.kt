@@ -8,6 +8,8 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import net.sqlcipher.database.SQLiteDatabase
 import net.sqlcipher.database.SupportFactory
 import java.security.KeyStore
@@ -30,14 +32,15 @@ import javax.crypto.spec.GCMParameterSpec
  * own rule about never silently wiping a user's data.
  */
 @Database(
-    entities = [PeerEntity::class, MessageEntity::class],
-    version = 1,
+    entities = [PeerEntity::class, MessageEntity::class, IouEntity::class],
+    version = 3,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun peerDao(): PeerDao
     abstract fun messageDao(): MessageDao
+    abstract fun iouDao(): IouDao
 
     companion object {
         private const val DB_NAME = "sankatsetu.db"
@@ -46,11 +49,41 @@ abstract class AppDatabase : RoomDatabase() {
         private const val PREF_WRAPPED_PASSPHRASE = "wrapped_passphrase"
         private const val PREF_IV = "wrap_iv"
 
+        /** Adds read-receipt bookkeeping (see docs/adr/0011-link-reliability.md) — a real migration, never destructive. */
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE messages ADD COLUMN readReceiptSent INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /** Adds the mesh IOU voucher table and peers.signingPublicKeyBase64 (see docs/adr/0012-mesh-iou-voucher.md) — a real migration, never destructive. */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE peers ADD COLUMN signingPublicKeyBase64 TEXT NOT NULL DEFAULT ''")
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `ious` (
+                        `iouId` TEXT NOT NULL PRIMARY KEY,
+                        `isOwedToMe` INTEGER NOT NULL,
+                        `counterpartyPeerIdBase64` TEXT NOT NULL,
+                        `counterpartyNickname` TEXT NOT NULL,
+                        `amountPaise` INTEGER NOT NULL,
+                        `memo` TEXT NOT NULL,
+                        `createdAt` INTEGER NOT NULL,
+                        `status` TEXT NOT NULL,
+                        `signatureBase64` TEXT NOT NULL
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_ious_createdAt` ON `ious` (`createdAt`)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_ious_status` ON `ious` (`status`)")
+            }
+        }
+
         fun build(context: Context): AppDatabase {
             val passphrase = loadOrCreatePassphrase(context)
             val factory = SupportFactory(SQLiteDatabase.getBytes(passphrase))
             return Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .build()
         }
 

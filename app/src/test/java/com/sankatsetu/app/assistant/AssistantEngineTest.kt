@@ -13,7 +13,6 @@ class AssistantEngineTest {
             id = "bleeding",
             source = "Test Source",
             section = "Bleeding",
-            keywords = listOf("bleeding", "wound"),
             text = "Apply firm direct pressure to a bleeding wound."
         )
     )

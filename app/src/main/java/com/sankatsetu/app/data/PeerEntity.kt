@@ -20,5 +20,7 @@ data class PeerEntity(
     val nickname: String,
     val firstSeen: Long,
     val lastSeen: Long,
-    val lastKnownHopCount: Int
+    val lastKnownHopCount: Int,
+    /** X.509-encoded ECDSA signing public key from their announce — needed to verify a mesh IOU voucher really came from them. */
+    val signingPublicKeyBase64: String = ""
 )

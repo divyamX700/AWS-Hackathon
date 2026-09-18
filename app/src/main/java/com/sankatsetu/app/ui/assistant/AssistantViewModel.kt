@@ -3,6 +3,7 @@ package com.sankatsetu.app.ui.assistant
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sankatsetu.app.assistant.AssistantEngine
+import com.sankatsetu.app.assistant.AssistantExchange
 import com.sankatsetu.app.assistant.AssistantSource
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,13 +38,26 @@ class AssistantViewModel(private val engine: AssistantEngine) : ViewModel() {
         if (question.isBlank()) return
         val turn = AssistantTurn(question = question)
 
+        // Snapshot prior turns as history *before* appending the new one —
+        // this is what makes a follow-up like "what about for a child?"
+        // resolve against the actual preceding exchange instead of the
+        // model seeing each question cold, per the multi-turn requirement.
+        // Only completed, actually-generated answers count as history: a
+        // still-pending or extractive-fallback answer isn't something the
+        // model itself said, so it shouldn't be replayed back to it as if
+        // it were.
+        val history = _uiState.value.turns.mapNotNull { prior ->
+            val answer = prior.answer
+            if (answer != null && prior.wasGenerated) AssistantExchange(prior.question, answer) else null
+        }
+
         _uiState.value = _uiState.value.copy(
             turns = _uiState.value.turns + turn,
             isThinking = true
         )
 
         viewModelScope.launch {
-            val result = engine.answer(question)
+            val result = engine.answer(question, history)
             val updatedTurns = _uiState.value.turns.map {
                 if (it.id == turn.id) {
                     it.copy(answer = result.text, sources = result.sources, wasGenerated = result.wasGenerated)

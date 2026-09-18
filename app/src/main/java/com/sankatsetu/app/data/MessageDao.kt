@@ -19,4 +19,23 @@ interface MessageDao {
 
     @Query("UPDATE messages SET status = :status WHERE messageId = :messageId")
     suspend fun updateStatus(messageId: String, status: String)
+
+    /**
+     * Only advances status forward (queued < sending < sent < delivered < read):
+     * a late-arriving "delivered" ack must never downgrade a message that a
+     * subsequent "read" receipt already advanced past it, and vice versa if
+     * they arrive out of order.
+     */
+    @Query(
+        """UPDATE messages SET status = :status WHERE messageId = :messageId AND
+           (CASE status WHEN 'queued' THEN 0 WHEN 'sending' THEN 1 WHEN 'sent' THEN 2 WHEN 'delivered' THEN 3 WHEN 'read' THEN 4 ELSE -1 END) <
+           (CASE :status WHEN 'queued' THEN 0 WHEN 'sending' THEN 1 WHEN 'sent' THEN 2 WHEN 'delivered' THEN 3 WHEN 'read' THEN 4 ELSE -1 END)"""
+    )
+    suspend fun advanceStatus(messageId: String, status: String)
+
+    @Query("SELECT * FROM messages WHERE threadPeerIdBase64 = :peerIdBase64 AND isOutgoing = 0 AND readReceiptSent = 0")
+    suspend fun getUnacknowledgedIncoming(peerIdBase64: String): List<MessageEntity>
+
+    @Query("UPDATE messages SET readReceiptSent = 1 WHERE messageId = :messageId")
+    suspend fun markReadReceiptSent(messageId: String)
 }

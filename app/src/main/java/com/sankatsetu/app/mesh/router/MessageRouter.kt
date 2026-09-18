@@ -14,6 +14,12 @@ import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.random.Random
 
+/** A directed send either went out over a live link now, or was queued because no link exists at all. */
+data class SendOutcome(val messageId: String, val queued: Boolean)
+
+/** Fired whenever a peer identity transitions between reachable and unreachable — see [MessageRouter.peerLinkEvents]. */
+data class PeerLinkEvent(val peerId: ByteArray, val connected: Boolean)
+
 /**
  * Transport-agnostic packet dispatcher: the piece that turns "a bunch of BLE
  * links to nearby phones" into "a mesh". Owns TTL clamping, dedup, relay
@@ -43,9 +49,20 @@ class MessageRouter(
     private val links = ConcurrentHashMap<String, MeshLink>()
     private val linksLock = Mutex()
 
+    // Which peer identity was last seen arriving over which raw link — lets us
+    // tell the UI "this specific peer just became (un)reachable" rather than
+    // just "some link changed." Keyed by a hex encoding of the peer ID (plain
+    // Kotlin, no Android dependency, so this class still runs in a JVM test).
+    private val linkPeerIds = ConcurrentHashMap<String, String>() // linkId -> hex(peerId)
+    private val peerIdBytesByHex = ConcurrentHashMap<String, ByteArray>()
+
     private val _inboundApplicationPackets = MutableSharedFlow<MeshPacket>(extraBufferCapacity = 64)
     /** Emits packets addressed to us (recipientId == our peer ID) or public broadcasts, post-dedup. */
     val inboundApplicationPackets: SharedFlow<MeshPacket> = _inboundApplicationPackets
+
+    private val _peerLinkEvents = MutableSharedFlow<PeerLinkEvent>(extraBufferCapacity = 64)
+    /** Emits whenever a peer identity (not just a raw link) becomes reachable or unreachable. */
+    val peerLinkEvents: SharedFlow<PeerLinkEvent> = _peerLinkEvents
 
     // --- Link lifecycle, called by MeshTransport ---
 
@@ -53,11 +70,33 @@ class MessageRouter(
         links[link.linkId] = link
     }
 
+    /**
+     * A link dying doesn't necessarily mean the peer behind it is gone — with
+     * role-split link IDs (see MeshTransport) the same peer can have both a
+     * central-role and peripheral-role link simultaneously, and losing one
+     * doesn't mean losing the other. Only fire a disconnect event once no
+     * link at all still maps to that peer.
+     */
     fun onLinkDisconnected(linkId: String) {
         links.remove(linkId)
+        val peerHex = linkPeerIds.remove(linkId) ?: return
+        val stillReachable = linkPeerIds.values.contains(peerHex)
+        if (!stillReachable) {
+            peerIdBytesByHex.remove(peerHex)?.let { peerId ->
+                _peerLinkEvents.tryEmit(PeerLinkEvent(peerId, connected = false))
+            }
+        }
     }
 
     fun connectedLinkCount(): Int = links.size
+
+    private fun recordLinkPeer(linkId: String, peerId: ByteArray) {
+        val hex = peerId.toHexKey()
+        val wasReachable = linkPeerIds.values.contains(hex)
+        linkPeerIds[linkId] = hex
+        peerIdBytesByHex[hex] = peerId
+        if (!wasReachable) _peerLinkEvents.tryEmit(PeerLinkEvent(peerId, connected = true))
+    }
 
     // --- Outbound ---
 
@@ -86,7 +125,7 @@ class MessageRouter(
      * attempt the send (it may reach the recipient in one hop or relay
      * through whoever *is* connected) rather than queuing pre-emptively.
      */
-    suspend fun sendDirected(type: MessageType, recipientId: ByteArray, payload: ByteArray, sign: Boolean = false, padded: Boolean = true): String {
+    suspend fun sendDirected(type: MessageType, recipientId: ByteArray, payload: ByteArray, sign: Boolean = false, padded: Boolean = true): SendOutcome {
         val messageId = java.util.UUID.randomUUID().toString()
         if (links.isEmpty()) {
             outbox.enqueue(
@@ -99,7 +138,7 @@ class MessageRouter(
                     queuedAt = System.currentTimeMillis()
                 )
             )
-            return messageId
+            return SendOutcome(messageId, queued = true)
         }
 
         val unsigned = MeshPacket(
@@ -113,7 +152,7 @@ class MessageRouter(
         val packet = if (sign) unsigned.copy(signature = signer!!(unsigned.signingBytes())) else unsigned
         seenCache.markIfNew(packet)
         relayDirected(packet, ingressLinkId = null, padded = padded)
-        return messageId
+        return SendOutcome(messageId, queued = false)
     }
 
     /**
@@ -137,6 +176,11 @@ class MessageRouter(
     suspend fun handleInboundBytes(fromLinkId: String, raw: ByteArray) {
         val packet = BinaryProtocol.decode(raw) ?: return // malformed — drop silently, don't crash the mesh
         if (packet.senderId.contentEquals(localPeerId)) return // our own packet came back around; ignore
+
+        // Refresh liveness even for a duplicate/retransmitted packet — this is
+        // what lets the UI show "disconnected" quickly instead of trusting a
+        // stale Noise-session flag that never resets on its own.
+        recordLinkPeer(fromLinkId, packet.senderId)
 
         if (!seenCache.markIfNew(packet)) return // duplicate: dedup absorbs it, no re-relay
 
@@ -272,6 +316,8 @@ class MessageRouter(
 
     private fun isNoiseType(type: MessageType): Boolean =
         type == MessageType.NOISE_HANDSHAKE || type == MessageType.NOISE_ENCRYPTED
+
+    private fun ByteArray.toHexKey(): String = joinToString("") { "%02x".format(it) }
 
     companion object {
         private const val DENSE_LINK_THRESHOLD = 6

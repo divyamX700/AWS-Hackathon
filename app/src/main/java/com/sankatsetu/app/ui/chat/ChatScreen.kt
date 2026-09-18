@@ -1,7 +1,8 @@
 package com.sankatsetu.app.ui.chat
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -25,11 +27,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -41,47 +45,69 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.ui.theme.SankatSetuColors
 
-/** Peer list — the mesh's front door. Tap a peer to open [ChatThreadScreen]. */
+/** Peer list — the mesh's front door. Tap a peer to open [ChatThreadScreen], long-press to forget a stale one. */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit) {
     val state by viewModel.uiState.collectAsState()
+    var peerToForget by remember { mutableStateOf<PeerUiModel?>(null) }
 
-    Column(Modifier.fillMaxSize()) {
-        if (!state.bluetoothOn) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .background(MaterialTheme.colorScheme.errorContainer)
-                    .padding(12.dp)
-            ) {
-                Text("Bluetooth is off — turn it on to reach nearby phones")
+    Scaffold(topBar = { TopAppBar(title = { Text("Chat") }) }) { padding ->
+        Column(Modifier.padding(padding).fillMaxSize()) {
+            if (!state.bluetoothOn) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .background(MaterialTheme.colorScheme.errorContainer)
+                        .padding(12.dp)
+                ) {
+                    Text("Bluetooth is off — turn it on to reach nearby phones")
+                }
             }
-        }
 
-        if (state.peers.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(
-                    "Looking for nearby phones…",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(state.peers, key = { it.peerIdBase64 }) { peer ->
-                    PeerRow(peer, onClick = { onOpenThread(peer) })
+            if (state.peers.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(
+                        "Looking for nearby phones…",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(state.peers, key = { it.peerIdBase64 }) { peer ->
+                        PeerRow(peer, onClick = { onOpenThread(peer) }, onLongPress = { peerToForget = peer })
+                    }
                 }
             }
         }
     }
+
+    peerToForget?.let { peer ->
+        AlertDialog(
+            onDismissRequest = { peerToForget = null },
+            title = { Text("Forget ${peer.nickname}?") },
+            text = { Text("Removes this peer and its chat history from this phone only. If their phone is still nearby, it will reappear as a new entry.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.forgetPeer(peer.peerIdBase64)
+                    peerToForget = null
+                }) { Text("Forget") }
+            },
+            dismissButton = {
+                TextButton(onClick = { peerToForget = null }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PeerRow(peer: PeerUiModel, onClick: () -> Unit) {
+private fun PeerRow(peer: PeerUiModel, onClick: () -> Unit, onLongPress: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(onClick = onClick, onLongClick = onLongPress)
     ) {
         Row(
             Modifier
@@ -93,7 +119,11 @@ private fun PeerRow(peer: PeerUiModel, onClick: () -> Unit) {
                 Modifier
                     .size(10.dp)
                     .background(
-                        color = if (peer.handshakeEstablished) SankatSetuColors.SafeGreen else SankatSetuColors.CautionAmber,
+                        color = when {
+                            !peer.connected -> SankatSetuColors.OfflineGray
+                            peer.handshakeEstablished -> SankatSetuColors.SafeGreen
+                            else -> SankatSetuColors.CautionAmber
+                        },
                         shape = CircleShape
                     )
             )
@@ -101,7 +131,11 @@ private fun PeerRow(peer: PeerUiModel, onClick: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text(peer.nickname, style = MaterialTheme.typography.bodyLarge)
                 Text(
-                    if (peer.handshakeEstablished) "Ready to chat" else "Connecting…",
+                    when {
+                        !peer.connected -> "Disconnected"
+                        peer.handshakeEstablished -> "Ready to chat"
+                        else -> "Connecting…"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -131,10 +165,21 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
     val messages by viewModel.threadMessages(peer.peerIdBase64).collectAsState(initial = emptyList())
     var draft by remember { mutableStateOf("") }
 
+    LaunchedEffect(peer.peerIdBase64) { viewModel.onThreadOpened(peer.peerIdBase64) }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(peer.nickname) },
+                title = {
+                    Column {
+                        Text(peer.nickname)
+                        Text(
+                            if (peer.connected) "online" else "disconnected",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (peer.connected) SankatSetuColors.SafeGreen else SankatSetuColors.OfflineGray
+                        )
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -150,7 +195,12 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(messages) { message ->
-                    MessageBubble(text = message.body, isOutgoing = message.isOutgoing, hopCount = message.hopCount)
+                    MessageBubble(
+                        text = message.body,
+                        isOutgoing = message.isOutgoing,
+                        hopCount = message.hopCount,
+                        status = message.status
+                    )
                 }
             }
 
@@ -185,7 +235,7 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
 }
 
 @Composable
-private fun MessageBubble(text: String, isOutgoing: Boolean, hopCount: Int) {
+private fun MessageBubble(text: String, isOutgoing: Boolean, hopCount: Int, status: String) {
     Row(
         Modifier.fillMaxWidth(),
         horizontalArrangement = if (isOutgoing) Arrangement.End else Arrangement.Start
@@ -204,7 +254,34 @@ private fun MessageBubble(text: String, isOutgoing: Boolean, hopCount: Int) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                if (isOutgoing) {
+                    Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                        MessageStatusGlyph(status)
+                    }
+                }
             }
         }
+    }
+}
+
+/**
+ * WhatsApp-style delivery ticks: single grey = left this phone but not yet
+ * confirmed, double grey = the peer's app decrypted it, double blue = the
+ * peer opened the thread and saw it. "queued" gets a clock instead of a
+ * tick since it never actually reached a radio yet — see ChatViewModel's
+ * EnvelopeKind/onThreadOpened for how each transition fires.
+ */
+@Composable
+private fun MessageStatusGlyph(status: String) {
+    val (glyph, color) = when (status) {
+        "queued" -> "waiting…" to MaterialTheme.colorScheme.onSurfaceVariant
+        "sending" -> "sending…" to MaterialTheme.colorScheme.onSurfaceVariant
+        "sent" -> "✓" to MaterialTheme.colorScheme.onSurfaceVariant
+        "delivered" -> "✓✓" to MaterialTheme.colorScheme.onSurfaceVariant
+        "read" -> "✓✓" to SankatSetuColors.ReadBlue
+        else -> "" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    if (glyph.isNotEmpty()) {
+        Text(glyph, style = MaterialTheme.typography.labelSmall, color = color)
     }
 }

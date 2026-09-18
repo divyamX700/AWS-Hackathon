@@ -19,4 +19,16 @@ interface PeerDao {
 
     @Query("UPDATE peers SET lastSeen = :timestamp, lastKnownHopCount = :hopCount WHERE peerIdBase64 = :peerIdBase64")
     suspend fun touch(peerIdBase64: String, timestamp: Long, hopCount: Int)
+
+    /**
+     * Forgets a peer record — the mesh has no concept of "delete this
+     * device," so this only removes local history. If the same phone
+     * announces again it reappears as a fresh row; this doesn't block them.
+     * Exists because repeated reinstalls during development left multiple
+     * dead identities for the same physical phones piling up in the peer
+     * list with no way to clear them — a real user hitting stale entries
+     * from an old device needs the same escape hatch.
+     */
+    @Query("DELETE FROM peers WHERE peerIdBase64 = :peerIdBase64")
+    suspend fun delete(peerIdBase64: String)
 }

@@ -69,7 +69,14 @@ class NoiseSession(
     /** Feeds an inbound handshake message. Call [nextHandshakeMessage] afterward to see if a reply is due. */
     fun consumeHandshakeMessage(message: ByteArray) {
         if (handshakeState.action != HandshakeState.READ_MESSAGE) return
-        handshakeState.readMessage(message, 0, message.size, null, 0)
+        // Unlike writeMessage(), readMessage() cannot take a null payload
+        // buffer even for an empty handshake payload — it calls .length on
+        // it unconditionally internally (confirmed via real-device crash:
+        // NullPointerException at HandshakeState.readMessage). Plaintext
+        // output is never longer than the ciphertext it came from, so
+        // sizing the scratch buffer to message.size is always sufficient.
+        val payloadBuffer = ByteArray(message.size)
+        handshakeState.readMessage(message, 0, message.size, payloadBuffer, 0)
         maybeSplit()
     }
 

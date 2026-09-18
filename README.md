@@ -15,25 +15,38 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
 
 ## Status
 
-**Day 2 slice** (per `docs/adr/0001-hackathon-scope-and-day1-slice.md` and
-its Day 2 follow-ons):
+**Day 3 slice**:
 
 - **Mesh**: BLE transport, binary wire protocol, TTL/dedup/jitter/fanout
-  routing, Noise `XX`-encrypted 1:1 chat, packet fragmentation for payloads
-  over one BLE write, and a sender outbox so a message queued for an
-  unreachable peer waits instead of vanishing (courier envelopes — relaying
-  via a *third party's* phone — deferred to Day 3, see
-  `docs/adr/0008-store-and-forward-scope.md`).
-- **Assistant**: a real, working offline Q&A tab — keyword/term-overlap
-  retrieval (not yet the neural-embedding search the PRD describes) over a
-  small hand-written first-aid/disaster corpus, with the wiring already in
-  place for real on-device Gemma generation via MediaPipe once a model file
-  is side-loaded. See `docs/adr/0009-on-device-assistant-scope.md` for
-  exactly what's real vs. deferred here.
-- Persistence (Room+SQLCipher) and a two-tab Compose UI (Chat, Assistant).
+  routing, Noise `XX`-encrypted 1:1 chat, packet fragmentation, a sender
+  outbox, WhatsApp-style delivery ticks (queued/sent/delivered/read), a live
+  connectivity indicator, and a write-based heartbeat that detects a dead
+  BLE link in ~10-15s instead of waiting on Android's own (much slower, or
+  sometimes never-firing) supervision timeout. **Verified working between
+  two real physical phones**, including full disconnect/reconnect/outbox-retry
+  cycles — see `docs/adr/0010` and `docs/adr/0011`.
+- **Assistant**: a real on-device LLM (Qwen2.5-0.5B-Instruct, int8, via
+  MediaPipe's LLM Inference API) answering from a genuine hybrid **BM25 +
+  TF-IDF** retriever over a from-scratch, plain-text crisis-management
+  knowledge base (22 documents — first aid, CPR, burns, fractures, natural
+  disasters, water purification, psychological first aid, poisoning,
+  emergency childbirth, and more — see `docs/knowledge-base/`). Falls back
+  to an honest extractive answer (the retrieved passage verbatim) if no
+  model is side-loaded or a generation comes back empty — never fabricates.
+  See `docs/adr/0011-on-device-llm-model-choice.md` for the model research
+  (why not Qwen3-0.6B, the toolchain constraints that shaped the final
+  pick) and courier envelopes / neural embeddings as the honestly-deferred
+  next step.
+- **Pay tab**: USSD (`*99#`) and UPI 123Pay dial cards (open the system
+  dialer pre-filled, never auto-dial — see `docs/adr/0012`), plus a
+  mesh-signed IOU voucher (promise-to-pay, ECDSA-signed, delivered and
+  verified over the same mesh transport as chat, settled manually since this
+  app never executes a real financial transaction itself).
+- Persistence (Room+SQLCipher, real migrations only) and a three-tab
+  Compose UI (Chat, Pay, Assistant).
 
-Not yet built: payment import, mesh IOU, courier envelopes, Cedar
-authorization, Nostr bridge, gateway coordinator. Day 3 per `docs/PLAN.md`.
+Not yet built: courier envelopes (relaying via a third party's phone),
+Cedar authorization, Nostr bridge, gateway coordinator.
 
 **Verified building and running, not just compiling**: `./gradlew
 assembleDebug` succeeds (~57 MB APK, MediaPipe's native libs included);
@@ -60,9 +73,13 @@ on Android 14 by starting a Bluetooth-typed foreground service without
 checking whether Bluetooth permissions were actually granted, not just
 requested (`docs/adr/0009`'s bug note).
 
-**Not yet verified**: BLE mesh discovery/pairing between two real phones —
-an emulator has no Bluetooth radio, so this genuinely needs physical
-hardware. Everything else has been verified running, not just compiling.
+**Verified on two real phones** (a Moto G57 Power and a Nothing CMF Phone 1):
+BLE mesh discovery, connection, encrypted chat both directions, disconnect
+detection, outbox retry on reconnect, and the on-device LLM generating real
+(if occasionally short — it's a 0.5B model) answers grounded in the
+knowledge base. The Pay tab's IOU protocol logic is unit tested and the UI
+verified on an emulator; a live two-phone IOU send/receive/verify pass is
+still pending physical hardware access.
 
 ## Running it
 
@@ -86,12 +103,24 @@ demo — an emulator has no real Bluetooth radio, so mesh discovery/pairing
 can only be verified on physical hardware. No AWS account, no server, no
 internet connection needed for the mesh or Assistant features.
 
-The Assistant tab works out of the box with no setup (offline keyword
-retrieval over the starter corpus). To get real on-device LLM-generated
-answers instead of the extractive fallback, side-load a Gemma model file —
-see `docs/adr/0005-model-assets-not-committed.md` and
-`docs/adr/0009-on-device-assistant-scope.md` for the expected path
-(`MediaPipeLlmAssistant.defaultModelPath`) and exact filename.
+The Assistant tab works out of the box with no setup (BM25+TF-IDF retrieval
+over the 22-document knowledge base, extractive answers). To get real
+on-device LLM-generated answers, side-load the model file (not bundled in
+the APK — see `docs/adr/0005`):
+
+```bash
+curl -L -o qwen2.5-0.5b-instruct-q8.task \
+  "https://huggingface.co/litert-community/Qwen2.5-0.5B-Instruct/resolve/main/Qwen2.5-0.5B-Instruct_multi-prefill-seq_q8_ekv1280.task"
+adb push qwen2.5-0.5b-instruct-q8.task \
+  /sdcard/Android/data/com.sankatsetu.app/files/models/qwen2.5-0.5b-instruct-q8.task
+```
+
+See `docs/adr/0011-on-device-llm-model-choice.md` for why this exact model
+and file variant (not Qwen3-0.6B, not one of the other `.task` variants on
+that page) — the short version: it's the only combination that both fits
+under 1B params for fast on-device inference and actually loads with this
+project's pinned `tasks-genai` version (`0.10.20`, itself constrained by the
+Day 1 JDK11 toolchain pin — see `docs/adr/0006`).
 
 ## Repo layout
 

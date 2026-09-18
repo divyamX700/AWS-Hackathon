@@ -22,6 +22,8 @@ data class MessageEntity(
     val sentAt: Long,
     val receivedAt: Long,
     val hopCount: Int,
-    val status: String, // sending | sent | delivered | failed
-    val isOutgoing: Boolean
+    val status: String, // queued | sending | sent | delivered | read
+    val isOutgoing: Boolean,
+    /** Local-only bookkeeping: have *we* (the receiver of this message) already told the sender we've seen it? */
+    val readReceiptSent: Boolean = false
 )

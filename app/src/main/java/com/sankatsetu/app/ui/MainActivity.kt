@@ -8,16 +8,23 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.SmartToy
+import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.sankatsetu.app.SankatSetuApplication
@@ -28,11 +35,15 @@ import com.sankatsetu.app.ui.chat.ChatListScreen
 import com.sankatsetu.app.ui.chat.ChatThreadScreen
 import com.sankatsetu.app.ui.chat.ChatViewModel
 import com.sankatsetu.app.ui.chat.PeerUiModel
+import com.sankatsetu.app.ui.pay.PayScreen
+import com.sankatsetu.app.ui.pay.PayViewModel
 import com.sankatsetu.app.ui.theme.SankatSetuTheme
 
-private enum class Tab(val label: String, val emoji: String) {
-    CHAT("Chat", "💬"),
-    ASSISTANT("Assistant", "🤖")
+// Real drawn icons, not emoji — see docs/adr/0013-operate-mode-color-and-icons.md.
+private enum class Tab(val label: String, val icon: ImageVector) {
+    CHAT("Chat", Icons.AutoMirrored.Filled.Chat),
+    PAY("Pay", Icons.Filled.Payments),
+    ASSISTANT("Assistant", Icons.Filled.SmartToy)
 }
 
 /**
@@ -71,6 +82,7 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var chatViewModel: ChatViewModel
     private lateinit var assistantViewModel: AssistantViewModel
+    private lateinit var payViewModel: PayViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -101,42 +113,60 @@ class MainActivity : ComponentActivity() {
             }
         )[AssistantViewModel::class.java]
 
+        payViewModel = ViewModelProvider(
+            this,
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return PayViewModel(
+                        iouManager = app.container.iouManager,
+                        peerDao = app.container.database.peerDao()
+                    ) as T
+                }
+            }
+        )[PayViewModel::class.java]
+
         requestPermissions.launch(requiredPermissions())
 
         setContent {
             SankatSetuTheme {
                 Surface(modifier = Modifier) {
                     var currentTab by remember { mutableStateOf(Tab.CHAT) }
-                    var openThread by remember { mutableStateOf<PeerUiModel?>(null) }
+                    // Holds only the peer's *id*, not a PeerUiModel snapshot — a
+                    // held snapshot would freeze connectivity/handshake state at
+                    // whatever it was the moment the thread was opened, which is
+                    // exactly the bug real-device testing found: the thread kept
+                    // showing "online" long after the peer actually disconnected,
+                    // because the stale snapshot never got replaced. Re-deriving
+                    // it from the live uiState below keeps it current.
+                    var openThreadPeerId by remember { mutableStateOf<String?>(null) }
+                    val chatState by chatViewModel.uiState.collectAsState()
 
                     Scaffold(
                         bottomBar = {
                             NavigationBar {
-                                NavigationBarItem(
-                                    selected = currentTab == Tab.CHAT,
-                                    onClick = { currentTab = Tab.CHAT },
-                                    icon = { Text(Tab.CHAT.emoji) },
-                                    label = { Text(Tab.CHAT.label) }
-                                )
-                                NavigationBarItem(
-                                    selected = currentTab == Tab.ASSISTANT,
-                                    onClick = { currentTab = Tab.ASSISTANT },
-                                    icon = { Text(Tab.ASSISTANT.emoji) },
-                                    label = { Text(Tab.ASSISTANT.label) }
-                                )
+                                Tab.entries.forEach { tab ->
+                                    NavigationBarItem(
+                                        selected = currentTab == tab,
+                                        onClick = { currentTab = tab },
+                                        icon = { Icon(tab.icon, contentDescription = null) },
+                                        label = { Text(tab.label) }
+                                    )
+                                }
                             }
                         }
                     ) { padding ->
                         Surface(Modifier.padding(padding)) {
                             when (currentTab) {
                                 Tab.CHAT -> {
-                                    val thread = openThread
+                                    val thread = openThreadPeerId?.let { id -> chatState.peers.find { it.peerIdBase64 == id } }
                                     if (thread == null) {
-                                        ChatListScreen(viewModel = chatViewModel, onOpenThread = { openThread = it })
+                                        ChatListScreen(viewModel = chatViewModel, onOpenThread = { openThreadPeerId = it.peerIdBase64 })
                                     } else {
-                                        ChatThreadScreen(viewModel = chatViewModel, peer = thread, onBack = { openThread = null })
+                                        ChatThreadScreen(viewModel = chatViewModel, peer = thread, onBack = { openThreadPeerId = null })
                                     }
                                 }
+                                Tab.PAY -> PayScreen(viewModel = payViewModel)
                                 Tab.ASSISTANT -> AssistantScreen(viewModel = assistantViewModel)
                             }
                         }

@@ -11,17 +11,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
 private val LightColors = lightColorScheme(
-    primary = SankatSetuColors.CrisisRed,
+    primary = SankatSetuColors.OperateBlue,
     secondary = SankatSetuColors.SafeGreen,
     tertiary = SankatSetuColors.CautionAmber,
+    error = SankatSetuColors.CrisisRed,
     background = SankatSetuColors.NeutralSurface,
     onBackground = SankatSetuColors.NeutralInk
 )
 
 private val DarkColors = darkColorScheme(
-    primary = SankatSetuColors.CrisisRed,
+    primary = SankatSetuColors.OperateBlue,
     secondary = SankatSetuColors.SafeGreen,
     tertiary = SankatSetuColors.CautionAmber,
+    error = SankatSetuColors.CrisisRed,
     background = SankatSetuColors.NeutralSurfaceDark,
     onBackground = SankatSetuColors.NeutralSurface
 )

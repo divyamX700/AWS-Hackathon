@@ -7,9 +7,11 @@ import com.sankatsetu.app.assistant.MediaPipeLlmAssistant
 import com.sankatsetu.app.data.AppDatabase
 import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.router.MessageRouter
+import com.sankatsetu.app.payments.IouManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Hand-rolled composition root — no DI framework, on purpose. Follows
@@ -39,8 +41,25 @@ class AppContainer(context: Context) {
     // fresh device MediaPipeLlmAssistant.isAvailable is false and
     // AssistantEngine transparently falls back to extractive answers from
     // the knowledge base, per docs/adr/0009.
+    private val llmAssistant = MediaPipeLlmAssistant(context, MediaPipeLlmAssistant.defaultModelPath(context))
+
     val assistantEngine: AssistantEngine = AssistantEngine(
         knowledgeBase = KnowledgeBaseLoader.load(context),
-        llm = MediaPipeLlmAssistant(context, MediaPipeLlmAssistant.defaultModelPath(context))
+        llm = llmAssistant
+    )
+
+    init {
+        // Load the model off the UI thread as soon as the app starts,
+        // instead of on the person's first question — pure latency
+        // reduction, see MediaPipeLlmAssistant.warmUp's doc.
+        appScope.launch { llmAssistant.warmUp() }
+    }
+
+    val iouManager: IouManager = IouManager(
+        identity = identity,
+        router = messageRouter,
+        peerDao = database.peerDao(),
+        iouDao = database.iouDao(),
+        scope = appScope
     )
 }

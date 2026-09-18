@@ -18,6 +18,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
@@ -25,8 +26,22 @@ data class PeerUiModel(
     val peerIdBase64: String,
     val nickname: String,
     val hopCount: Int,
-    val handshakeEstablished: Boolean
+    val handshakeEstablished: Boolean,
+    /** Is there currently a live mesh link to this peer? False doesn't mean unreachable forever — see [MessageRouter.peerLinkEvents]. */
+    val connected: Boolean
 )
+
+/**
+ * Discriminates what's inside a [MessageType.NOISE_ENCRYPTED] plaintext once
+ * decrypted, so delivery/read receipts can travel through the same
+ * end-to-end-encrypted session as the chat text itself rather than as a
+ * separate unencrypted packet type. See docs/adr/0011-link-reliability.md.
+ */
+private object EnvelopeKind {
+    const val TEXT: Byte = 0x00
+    const val DELIVERED: Byte = 0x01
+    const val READ: Byte = 0x02
+}
 
 data class ChatUiState(
     val peers: List<PeerUiModel> = emptyList(),
@@ -57,6 +72,12 @@ class ChatViewModel(
     private val knownHopCounts = ConcurrentHashMap<String, Int>()
 
     private val _bluetoothOn = MutableStateFlow(true)
+    // Populated from router.peerLinkEvents — a live view of which peer
+    // identities currently have at least one real link, independent of
+    // NoiseSession.isEstablished (which, once true, never resets on its own
+    // and was exactly why "Ready to chat" kept showing after a real
+    // disconnect during range testing).
+    private val _connectedPeerIds = MutableStateFlow<Set<String>>(emptySet())
     private val _uiState = MutableStateFlow(ChatUiState())
     val uiState: StateFlow<ChatUiState> = _uiState
 
@@ -64,14 +85,15 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch {
-            combine(peerDao.observeAll(), _bluetoothOn) { peers, btOn ->
+            combine(peerDao.observeAll(), _bluetoothOn, _connectedPeerIds) { peers, btOn, connectedIds ->
                 ChatUiState(
                     peers = peers.map { p ->
                         PeerUiModel(
                             peerIdBase64 = p.peerIdBase64,
                             nickname = knownNicknames[p.peerIdBase64] ?: p.nickname,
                             hopCount = knownHopCounts[p.peerIdBase64] ?: p.lastKnownHopCount,
-                            handshakeEstablished = sessions[p.peerIdBase64]?.isEstablished == true
+                            handshakeEstablished = sessions[p.peerIdBase64]?.isEstablished == true,
+                            connected = connectedIds.contains(p.peerIdBase64)
                         )
                     },
                     bluetoothOn = btOn
@@ -79,7 +101,24 @@ class ChatViewModel(
             }.collect { _uiState.value = it }
         }
         viewModelScope.launch { observeInbound() }
+        viewModelScope.launch { observePeerLinkEvents() }
         viewModelScope.launch { announceLoop() }
+    }
+
+    /**
+     * A peer identity becoming reachable again is exactly when queued
+     * outbox messages for them should retry — this is a faster, more direct
+     * path than waiting for their next announce (which can be up to 30s
+     * away once both sides think the link is stable), and it's what makes a
+     * message typed while out of range actually leave once back in range.
+     */
+    private suspend fun observePeerLinkEvents() {
+        router.peerLinkEvents.collect { event ->
+            val peerIdB64 = Base64.encodeToString(event.peerId, Base64.NO_WRAP)
+            android.util.Log.i("ChatViewModel", "observePeerLinkEvents(): $peerIdB64 connected=${event.connected}")
+            _connectedPeerIds.update { current -> if (event.connected) current + peerIdB64 else current - peerIdB64 }
+            if (event.connected) router.retryOutbox(event.peerId)
+        }
     }
 
     /**
@@ -140,7 +179,8 @@ class ChatViewModel(
                     nickname = announce.nickname,
                     firstSeen = now,
                     lastSeen = now,
-                    lastKnownHopCount = hopCount.toInt()
+                    lastKnownHopCount = hopCount.toInt(),
+                    signingPublicKeyBase64 = Base64.encodeToString(announce.signingPublicKey, Base64.NO_WRAP)
                 )
             )
         } else {
@@ -196,21 +236,59 @@ class ChatViewModel(
         val peerIdB64 = Base64.encodeToString(packet.senderId, Base64.NO_WRAP)
         val session = sessions[peerIdB64] ?: return // no session: can't decrypt, drop (see NoiseSession.decrypt doc)
         val plaintext = session.decrypt(packet.payload) ?: return
-        val privateMessage = PrivateMessagePacket.decode(plaintext) ?: return
+        if (plaintext.isEmpty()) return
+        val kind = plaintext[0]
+        val body = plaintext.copyOfRange(1, plaintext.size)
 
-        messageDao.insert(
-            MessageEntity(
-                messageId = privateMessage.messageId,
-                threadPeerIdBase64 = peerIdB64,
-                senderPeerIdBase64 = peerIdB64,
-                body = privateMessage.content,
-                sentAt = packet.timestamp,
-                receivedAt = System.currentTimeMillis(),
-                hopCount = MeshPacket.DEFAULT_TTL - packet.ttl,
-                status = "delivered",
-                isOutgoing = false
-            )
-        )
+        when (kind) {
+            EnvelopeKind.TEXT -> {
+                val privateMessage = PrivateMessagePacket.decode(body) ?: return
+                messageDao.insert(
+                    MessageEntity(
+                        messageId = privateMessage.messageId,
+                        threadPeerIdBase64 = peerIdB64,
+                        senderPeerIdBase64 = peerIdB64,
+                        body = privateMessage.content,
+                        sentAt = packet.timestamp,
+                        receivedAt = System.currentTimeMillis(),
+                        hopCount = MeshPacket.DEFAULT_TTL - packet.ttl,
+                        status = "delivered",
+                        isOutgoing = false
+                    )
+                )
+                // Tell the sender their message actually reached and decrypted
+                // here — this is what turns a single grey tick into a double
+                // one, instead of the sender never knowing either way.
+                sendReceipt(packet.senderId, EnvelopeKind.DELIVERED, privateMessage.messageId)
+            }
+            EnvelopeKind.DELIVERED -> messageDao.advanceStatus(String(body, Charsets.UTF_8), "delivered")
+            EnvelopeKind.READ -> messageDao.advanceStatus(String(body, Charsets.UTF_8), "read")
+        }
+    }
+
+    private suspend fun sendReceipt(remotePeerId: ByteArray, kind: Byte, messageId: String) {
+        val peerIdB64 = Base64.encodeToString(remotePeerId, Base64.NO_WRAP)
+        val session = sessions[peerIdB64] ?: return
+        if (!session.isEstablished) return
+        val plaintext = byteArrayOf(kind) + messageId.toByteArray(Charsets.UTF_8)
+        val ciphertext = session.encrypt(plaintext) ?: return
+        router.sendDirected(MessageType.NOISE_ENCRYPTED, remotePeerId, ciphertext)
+    }
+
+    /**
+     * Call when the user opens a thread: sends a read receipt for every
+     * incoming message in it we haven't acknowledged yet, and marks them so
+     * we don't re-send on every recomposition. This is the "blue tick"
+     * half — [handleEncrypted]'s DELIVERED receipt is the "grey tick" half.
+     */
+    fun onThreadOpened(peerIdBase64: String) {
+        viewModelScope.launch {
+            val remotePeerId = Base64.decode(peerIdBase64, Base64.NO_WRAP)
+            for (message in messageDao.getUnacknowledgedIncoming(peerIdBase64)) {
+                sendReceipt(remotePeerId, EnvelopeKind.READ, message.messageId)
+                messageDao.markReadReceiptSent(message.messageId)
+            }
+        }
     }
 
     fun sendMessage(peerIdBase64: String, text: String) {
@@ -220,7 +298,8 @@ class ChatViewModel(
 
             val privateMessage = PrivateMessagePacket(content = text)
             val encoded = privateMessage.encode() ?: return@launch
-            val ciphertext = session.encrypt(encoded) ?: return@launch
+            val plaintext = byteArrayOf(EnvelopeKind.TEXT) + encoded
+            val ciphertext = session.encrypt(plaintext) ?: return@launch
             val remotePeerId = Base64.decode(peerIdBase64, Base64.NO_WRAP)
 
             val now = System.currentTimeMillis()
@@ -238,8 +317,23 @@ class ChatViewModel(
                 )
             )
 
-            router.sendDirected(MessageType.NOISE_ENCRYPTED, remotePeerId, ciphertext)
-            messageDao.updateStatus(privateMessage.messageId, "sent")
+            val outcome = router.sendDirected(MessageType.NOISE_ENCRYPTED, remotePeerId, ciphertext)
+            // Honest status: "sent" only if it actually left over a live
+            // link right now. If there was no link at all, it's sitting in
+            // the outbox — say so instead of falsely claiming "sent" (the
+            // bug that made a queued-while-disconnected message look
+            // identical to a delivered one).
+            messageDao.updateStatus(privateMessage.messageId, if (outcome.queued) "queued" else "sent")
+        }
+    }
+
+    /** Removes a peer from local history — see [PeerDao.delete]'s doc for why this exists. Does not affect the peer's own device. */
+    fun forgetPeer(peerIdBase64: String) {
+        viewModelScope.launch {
+            peerDao.delete(peerIdBase64)
+            sessions.remove(peerIdBase64)
+            knownNicknames.remove(peerIdBase64)
+            knownHopCounts.remove(peerIdBase64)
         }
     }
 }

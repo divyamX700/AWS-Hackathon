@@ -1,23 +1,40 @@
 package com.sankatsetu.app.assistant
 
+import kotlin.math.ln
+import kotlin.math.sqrt
+
 /**
- * Retrieval over the on-device knowledge base. This is a **keyword/term-
- * overlap scorer, not neural embedding similarity** — the PRD (§6.2, §F2.2)
- * describes MiniLM ONNX embeddings + an ANN index; that requires a model
- * file we don't have bundled and is real future work, not this. What's here
- * is a genuine, working, tested retrieval algorithm in the meantime — see
- * docs/adr/0009-on-device-assistant-scope.md for the honest accounting of
- * what's real vs. deferred in the Day 2 Assistant feature.
+ * Retrieval over the on-device knowledge base using a real hybrid **BM25 +
+ * TF-IDF** ranker — no curated keyword lists, no neural embeddings, just
+ * classic lexical IR run entirely on-device over plain-text passages. This
+ * replaces Day 2's keyword/term-overlap scorer (see docs/adr/0011).
  *
- * Scoring: each query token contributes [KEYWORD_WEIGHT] if it matches one
- * of a chunk's curated keywords exactly, or [TEXT_WORD_WEIGHT] per
- * occurrence as a whole word in the chunk's body text. Keyword matches are
- * weighted higher because they're curated signal; body-text matches are
- * noisier (common words like "the" are filtered as stop words first).
+ * - **BM25** (Okapi BM25, k1=1.5, b=0.75) is the primary ranking signal: it
+ *   rewards a query term appearing in a passage, weighted by how rare that
+ *   term is across the whole corpus (IDF), with diminishing returns for
+ *   repeated occurrences and a length-normalization term so long passages
+ *   don't win purely by being long.
+ * - **TF-IDF cosine similarity** is blended in as a secondary signal. It's
+ *   restricted to the query's own vocabulary (a standard, tractable
+ *   simplification for small on-device corpora — the full corpus vocabulary
+ *   cosine would cost more to compute for no real ranking benefit at this
+ *   corpus size) and rewards passages whose term-weight *profile* looks like
+ *   the query's, which BM25's saturation curve can under-weight for very
+ *   short passages.
+ *
+ * The index (document frequencies, average passage length) is rebuilt per
+ * query from the [chunks] list passed in. That's deliberately simple rather
+ * than cached: this runs over a few hundred short passages on a phone,
+ * which is microseconds of work, and it keeps this object stateless and
+ * trivially testable — no invalidation logic needed if the knowledge base
+ * changes.
  */
 object KnowledgeRetriever {
-    private const val KEYWORD_WEIGHT = 10
-    private const val TEXT_WORD_WEIGHT = 1
+    private const val BM25_K1 = 1.5
+    private const val BM25_B = 0.75
+    private const val BM25_WEIGHT = 0.7
+    private const val TFIDF_WEIGHT = 0.3
+    private const val HEADING_BOOST_REPEATS = 3
 
     private val STOP_WORDS = setOf(
         "a", "an", "the", "is", "are", "was", "were", "be", "been", "am",
@@ -27,7 +44,7 @@ object KnowledgeRetriever {
         "this", "that", "these", "those", "have", "has", "had", "not", "no"
     )
 
-    data class ScoredChunk(val chunk: KnowledgeChunk, val score: Int)
+    data class ScoredChunk(val chunk: KnowledgeChunk, val score: Double)
 
     /** Tokenizes [text] into lowercase alphanumeric words, dropping stop words. */
     fun tokenize(text: String): List<String> =
@@ -39,26 +56,58 @@ object KnowledgeRetriever {
 
     /** Returns the top [topK] chunks with score > 0, highest first. Empty if nothing matches. */
     fun search(query: String, chunks: List<KnowledgeChunk>, topK: Int = 3): List<ScoredChunk> {
-        val queryTokens = tokenize(query)
-        if (queryTokens.isEmpty()) return emptyList()
+        val queryTerms = tokenize(query).distinct()
+        if (queryTerms.isEmpty() || chunks.isEmpty()) return emptyList()
 
-        return chunks
-            .map { chunk -> ScoredChunk(chunk, scoreChunk(queryTokens, chunk)) }
-            .filter { it.score > 0 }
-            .sortedByDescending { it.score }
-            .take(topK)
-    }
+        // Section headings are scored too, weighted up via repetition — a
+        // real-device bug found the opposite (heading text ignored
+        // entirely): a "how do I treat a snake bite" query ranked the
+        // "Dog Bites and Rabies Risk" section above "Immediate Steps After
+        // a Snake Bite" itself, because both sections' *body* prose shares
+        // generic words like "bite" and "wound," while the word "snake" sat
+        // unscored in the section heading the whole time. Repeating the
+        // heading is a standard IR technique (title boosting) and needs no
+        // separate weighting mechanism — it just raises those terms' body
+        // term frequency naturally.
+        val docTokens = chunks.map { tokenize("${it.section} ".repeat(HEADING_BOOST_REPEATS) + it.text) }
+        val docLengths = docTokens.map { it.size }
+        val avgDocLength = docLengths.average().takeIf { it > 0.0 } ?: 1.0
+        val n = chunks.size
 
-    private fun scoreChunk(queryTokens: List<String>, chunk: KnowledgeChunk): Int {
-        val keywordSet = chunk.keywords.map { it.lowercase() }.toSet()
-        val bodyTokens = tokenize(chunk.text)
-        val bodyTokenCounts = bodyTokens.groupingBy { it }.eachCount()
-
-        var score = 0
-        for (token in queryTokens.distinct()) {
-            if (token in keywordSet) score += KEYWORD_WEIGHT
-            score += (bodyTokenCounts[token] ?: 0) * TEXT_WORD_WEIGHT
+        // Inverse document frequency per query term, BM25's smoothed variant
+        // (always positive even when a term appears in every passage, unlike
+        // classic IDF which can go negative in that case).
+        val idf = queryTerms.associateWith { term ->
+            val df = docTokens.count { term in it }
+            ln(((n - df + 0.5) / (df + 0.5)) + 1.0)
         }
-        return score
+        val queryVecNorm = sqrt(queryTerms.sumOf { t -> (idf[t] ?: 0.0).let { it * it } })
+
+        val scored = chunks.indices.map { i ->
+            val termCounts = docTokens[i].groupingBy { it }.eachCount()
+            val docLength = docLengths[i]
+
+            var bm25 = 0.0
+            var tfidfDot = 0.0
+            var docVecNormSq = 0.0
+            for (term in queryTerms) {
+                val tf = termCounts[term] ?: 0
+                val termIdf = idf[term] ?: 0.0
+                if (tf > 0) {
+                    val denom = tf + BM25_K1 * (1 - BM25_B + BM25_B * docLength / avgDocLength)
+                    bm25 += termIdf * (tf * (BM25_K1 + 1)) / denom
+
+                    val tfWeight = (1.0 + ln(tf.toDouble())) * termIdf
+                    tfidfDot += termIdf * tfWeight
+                    docVecNormSq += tfWeight * tfWeight
+                }
+            }
+            val docVecNorm = sqrt(docVecNormSq)
+            val tfidfCosine = if (docVecNorm > 0.0 && queryVecNorm > 0.0) tfidfDot / (docVecNorm * queryVecNorm) else 0.0
+
+            ScoredChunk(chunks[i], BM25_WEIGHT * bm25 + TFIDF_WEIGHT * tfidfCosine)
+        }
+
+        return scored.filter { it.score > 0.0 }.sortedByDescending { it.score }.take(topK)
     }
 }

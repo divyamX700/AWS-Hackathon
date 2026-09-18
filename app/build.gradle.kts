@@ -76,6 +76,11 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-core")
+    // Real drawn icons for the bottom nav (Chat/Pay/Assistant) and other
+    // chrome — replaces emoji-as-icons, which a design review flagged as
+    // reading as AI-generated placeholder art rather than a real icon
+    // system. See docs/adr/0013-operate-mode-color-and-icons.md.
+    implementation("androidx.compose.material:material-icons-extended")
     // activity-compose/lifecycle pinned older than latest: AGP 7.4.2's bundled
     // D8 crashes with a bare NullPointerException (not a clean version error)
     // dexing androidx.lifecycle:lifecycle-livedata-core 2.8.7's class files —
@@ -122,7 +127,7 @@ dependencies {
     // inference runtime. If this pulls in bytecode too new for AGP 7.4.2's
     // D8 (see docs/adr/0006's CameraX/Lifecycle precedent), pin to an older
     // tasks-genai release the same way.
-    implementation("com.google.mediapipe:tasks-genai:0.10.16")
+    implementation("com.google.mediapipe:tasks-genai:0.10.20") // see docs/adr/0011
 
     // --- Testing ---
     testImplementation("junit:junit:4.13.2")

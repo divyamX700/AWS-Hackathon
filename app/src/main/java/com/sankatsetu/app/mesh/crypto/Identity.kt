@@ -68,6 +68,27 @@ class Identity private constructor(
     }
 
     companion object {
+        /**
+         * Verifies a signature against an arbitrary *peer's* signing public
+         * key (as broadcast in their [com.sankatsetu.app.mesh.protocol.AnnouncementPacket]),
+         * not our own Keystore-held one — [verify] above only ever checks
+         * against our own cert, which is useless for checking whether an
+         * inbound IOU voucher was really signed by the peer it claims to be
+         * from. Needed for [com.sankatsetu.app.payments.IouManager] to reject
+         * a forged or tampered IOU before it ever shows in the UI as money
+         * someone owes.
+         */
+        fun verifyWithPublicKey(publicKeyBytes: ByteArray, data: ByteArray, signature: ByteArray): Boolean = try {
+            val publicKey = java.security.KeyFactory.getInstance("EC")
+                .generatePublic(java.security.spec.X509EncodedKeySpec(publicKeyBytes))
+            Signature.getInstance(SIGNATURE_ALGORITHM).apply {
+                initVerify(publicKey)
+                update(data)
+            }.verify(signature)
+        } catch (e: Exception) {
+            false // malformed key or signature — never a valid IOU, never a crash
+        }
+
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEYSTORE_ALIAS = "sankatsetu.signing.ecdsa"
         private const val SIGNATURE_ALGORITHM = "SHA256withECDSA"
