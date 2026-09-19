@@ -1,13 +1,14 @@
 # Handoff: Sankat Setu
 
-Written 2026-09-19. This is a complete, standalone handoff — read this
-file alone and you should understand the whole project, not just the
-latest session's diff. It supersedes every earlier version (still
-readable in git history, e.g. `9201b31`, `78f4744`, `4fdf572`, `e73a3bd`
-if you want prior snapshots, but you shouldn't need them). Every claim
-here reflects actual tested state, not aspiration. Where something is
-untested, partially done, or broken, it says so plainly, because that
-distinction has mattered more than once in this project's own history.
+Written 2026-09-19, last updated 2026-09-20. This is a complete,
+standalone handoff — read this file alone and you should understand the
+whole project, not just the latest session's diff. It supersedes every
+earlier version (still readable in git history, e.g. `9201b31`, `78f4744`,
+`4fdf572`, `e73a3bd` if you want prior snapshots, but you shouldn't need
+them). Every claim here reflects actual tested state, not aspiration.
+Where something is untested, partially done, or broken, it says so
+plainly, because that distinction has mattered more than once in this
+project's own history.
 
 **GitHub**: https://github.com/divyamX700/AWS-Hackathon — everything
 described here is pushed and current as of the commit this handoff itself
@@ -348,9 +349,13 @@ register (hop counts, timestamps, amounts) — never body prose.
 - **BLE mesh chat, single-device and self-loop verified**: transport,
   Noise encryption, router, sender outbox, editable nickname, "I'm Safe"
   one-tap broadcast (reuses the same encrypted-send path as a typed
-  message, to every peer with a completed handshake). **Two-phone
-  multi-hop has never been field-tested** — the single biggest
-  outstanding risk, see §6.
+  message, to every peer with a completed handshake). The encrypted
+  handshake now auto-initiates for a peer at **any** hop count, not just
+  one hop (fixed 2026-09-20, see §2's mesh-protocol section) — a real
+  logic fix, verified by a dedicated router-level test, not just a
+  hardware-testing gap. **Two-phone multi-hop has still never been
+  field-tested over real Bluetooth** — the single biggest outstanding
+  risk, see §6.
 - **On-device LLM Assistant**: real retrieval-grounded answers, a real
   fallback to plain conversation when nothing matches, a real extractive
   fallback when no model is loaded. Verified live with actual generation
@@ -424,7 +429,9 @@ requirement as closed unless there's a specific reason to add a 4th.
 
 1. **Two-phone mesh test.** Still the single biggest untested functional
    risk, independent of everything else. Needs a second physical device —
-   this is also the only way to verify SOS's receive path (§8) for real.
+   this is also the only way to verify SOS's receive path (§8) and the
+   now-fixed multi-hop handshake (§2) for real, not just at the router
+   level.
 2. **Record the demo video.** The app is visually stable for this; the
    two-phone gap above is the main risk to a strong demo.
 3. **Verify Cedar's flood-denial on a real BLE link**, ideally as part
@@ -438,9 +445,12 @@ requirement as closed unless there's a specific reason to add a 4th.
 8. OpenSearch remains the most tractable *additional* AWS tool if ever
    wanted, though not required.
 
-## 7. This session's work, specifically
+## 7. Session log
 
-For context on what just happened, on top of everything above:
+For context on what actually happened, session by session, on top of
+everything described above.
+
+### 2026-09-19 — ledger redesign, assistant fixes, first SOS ideation
 
 - Ran a full design-skill redesign producing the current "Post Office
   Passbook / Ledger Register" visual world (§2's Design section,
@@ -467,8 +477,43 @@ For context on what just happened, on top of everything above:
   button's copy, which was deliberately reverted back to its original
   phrasing after the user reviewed the plain-language version and
   preferred the original.
-- Ideated, then in a follow-up session actually built, an SOS broadcast
-  feature — see §8.
+- Ideated (not built) an SOS broadcast feature, parked in `docs/TODO.md`.
+
+### 2026-09-20 — SOS broadcast built, a real multi-hop bug fixed, cleanup
+
+- **Built the SOS broadcast feature** end to end from the prior session's
+  ideation — see §8 for the full detail (files, what's verified, what
+  isn't). Refined twice more the same session on direct user feedback:
+  once against real AI-slop patterns after reading
+  [impeccable.style/slop/](https://impeccable.style/slop/), once to
+  shrink the log further (3 rows → 2) and add timestamps.
+- **Found and fixed a real bug undercutting the app's core claim**: the
+  Noise handshake only ever auto-started for peers exactly one hop away,
+  meaning a peer further out showed up correctly in the peer list but
+  could never actually be messaged — the send button would silently
+  never activate. See §2's mesh-protocol section for the full writeup and
+  the new router test that proves the fix's mechanism.
+- **Removed real dead weight found by asking "why does this app want
+  camera access?"**: a whole `zxing-android-embedded` + CameraX
+  dependency block for a "QR setup handshake" feature that was scoped in
+  a comment but never built, plus seven manifest permissions
+  (`RECEIVE_SMS`, `CALL_PHONE`, `READ_PHONE_STATE`, `ANSWER_PHONE_CALLS`,
+  `READ_CONTACTS`, `SYSTEM_ALERT_WINDOW`, `MODIFY_AUDIO_SETTINGS`) with
+  zero references anywhere in the code. `INTERNET`/`ACCESS_NETWORK_STATE`
+  were kept, at the user's call, since ADR 0003 documents a real planned
+  use (the Nostr bridge) even though nothing calls them yet.
+- **A real mistake worth flagging for whoever picks this up next**: mid-session,
+  `adb uninstall` was used twice to clear leftover test data, which wipes
+  the entire encrypted local database — not just the rows being cleaned
+  up. This deleted the user's real peer list, chat history, and device
+  identity on their own physical test phone. **Never use `adb uninstall`
+  for test cleanup on a device with real data** — use `adb install -r`
+  (keeps data) and scoped deletes through the app's own DAOs (or a
+  temporary debug hook calling them) instead. This was actually
+  demonstrated safely later the same session: a synthetic peer + chat
+  thread was inserted directly via the real DAOs to show the user how an
+  out-of-range-but-previously-met peer renders, then removed with
+  `PeerDao.delete` + `MessageDao.deleteThread` — no data lost that time.
 
 ## 8. SOS broadcast
 
@@ -494,8 +539,8 @@ not a circular countdown ring — a deliberate simplification for reliable
 implementation under real testing time) rather than a single tap, since a
 false SOS is costly in a way a false "I'm Safe" isn't. Receiving shows a
 non-dismissible interrupt dialog (works from any tab, not just Chat) plus
-a reviewable log shared with the sender's own outgoing history. `wire uses
-MessageType.SOS_BROADCAST (0x40)`, already Cedar-gated at 5/minute per
+a reviewable log shared with the sender's own outgoing history. Wire uses
+`MessageType.SOS_BROADCAST` (`0x40`), already Cedar-gated at 5/minute per
 sender before this session (`assets/cedar/policies.cedar`) — no router or
 policy changes were needed, only the payload format and the two ends that
 were missing.
@@ -505,14 +550,38 @@ the local log with the right category and "sent to everyone in range" →
 confirmation text shows and clears → survives an app force-stop and
 relaunch (proves the Room migration and insert both actually committed,
 not just in-memory state) → a quick tap does not send, only a completed
-hold does → multiple sends stack newest-first with distinct IDs. **Not
-verified** (needs the second phone, same limitation as every other mesh
-feature in this app): a real received SOS actually triggering
-`SosInterruptDialog`, an unknown (non-peer) sender correctly showing
-"Unknown device," and the Cedar 5/minute cap actually throttling a spam
-attempt at the relay hop. Also not built: an `SOS_ACK` reply type, and any
+hold does → multiple sends stack newest-first with distinct IDs. Also
+verified the **receive path**, without a second phone: a synthetic
+incoming alert inserted directly into the same `sos_alerts` table the
+real receive path writes to (same DAO, same Flow, same ViewModel — a
+faithful exercise of the real code path, not a UI mockup) correctly
+triggered `SosInterruptDialog` from a cold app state, and acknowledging
+it moved it into the log with the right sender/category/hop-count text.
+**Still not verified**: an actual over-the-air delivery end to end
+(needs the second phone, same limitation as every other mesh feature in
+this app), and the Cedar 5/minute cap actually throttling a spam attempt
+at a real relay hop. Also not built: an `SOS_ACK` reply type, and any
 local send-rate limit (Cedar's cap only throttles a receiving node's
 *relay* of a flood, not this device's own repeated local sends).
+
+**Refined after the initial build, same session**, following direct
+user feedback plus a deliberate pass against
+[impeccable.style/slop/](https://impeccable.style/slop/)'s AI-slop
+catalog: the emergency log used to give every row its own red-bordered
+card — exactly their cataloged "a colored stripe decorates every card"
+pattern, diluting the alarm instead of reinforcing it. Log rows are now
+plain, divider-separated lines; the hazard-stripe border survives only
+on the single "Report emergency" control itself, where it's a genuine
+warning, not decoration (see `DESIGN.md`'s own note on this). The
+peer-count summary was cut from a full `Card` with a display-size digit
+(a "hero metric" treatment for a number that isn't actually important)
+down to a single quiet text line. The log and the peer/chat list are now
+separated by an explicit divider, and the log caps at **2** visible rows
+(down from an initial 3, per direct user feedback that it was still
+taking too much space) — past that it scrolls in its own bounded region
+so a long alert history can never push the peer list, or an open chat
+thread, off screen. Each row also got a trailing `HH:mm` timestamp
+(reusing the same formatter chat bubbles already use).
 
 ## 9. Setting up on a new machine
 
