@@ -1,13 +1,19 @@
 # Handoff: Sankat Setu
 
-Written 2026-09-19 (supersedes the 2026-09-18 version — that one is still
-readable in git history at commit `000357b` if you want the earlier
-snapshot). Read this fully before touching code. Every claim here reflects
-actual tested state, not aspiration — where something is untested,
-partially done, or broken, it says so plainly.
+Written 2026-09-19 (supersedes the earlier 2026-09-19 version — that one is
+still readable in git history at commit `e73a3bd` if you want the earlier
+snapshot, and the one before that at `000357b`). Read this fully before
+touching code. Every claim here reflects actual tested state, not
+aspiration — where something is untested, partially done, or broken, it
+says so plainly.
 
 **GitHub**: https://github.com/divyamX700/AWS-Hackathon — everything
-described here is pushed and current as of commit `f052d13`.
+described here is pushed and current as of commit `4fdf572`. Working tree
+was clean at the time this handoff was written.
+
+**This handoff was written specifically because work is moving to a new
+coding environment/machine.** Read §8 first if you're setting up fresh —
+it's the fastest path to a working build.
 
 ## 1. Hackathon context — confirmed against the real rules page
 
@@ -17,17 +23,15 @@ described here is pushed and current as of commit `f052d13`.
   design — the whole pitch is crisis response with zero connectivity.
 - Competing in the **Build It** track: "open source, on your machine — no
   AWS account, no card, no bill."
-- **The real Build It tool list** (verified directly against the
-  hackathon's own page, not the original draft PRD's guess): **Strands
-  Agents SDK, PartyRock, SAM CLI, LocalStack, Firecracker, Corretto,
-  OpenSearch, Cedar** — 8 tools across 6 categories (Agents/AI,
-  Containers/K8s, Serverless, Servers/runtimes, Data/search, Auth/policy).
+- **The real Build It tool list**: Strands Agents SDK, PartyRock, SAM CLI,
+  LocalStack, Firecracker, Corretto, OpenSearch, Cedar — 8 tools.
 - **The actual judging rule**: *"Using an AWS open-source project or AWS
-  service is mandatory to win a prize."* That's **one**, not all eight —
-  lighter than the original draft PRD's self-imposed "demonstrate 4 of 5"
-  goal, which was never an actual competition rule.
-- **Current status: zero of the eight tools are integrated into the repo**
-  — see §4a, this is the single most urgent gap heading into judging.
+  service is mandatory to win a prize."* One tool, not all eight.
+- **Current status: 3 of 8 tools (Corretto, Cedar, Strands) are genuinely
+  verified working on real hardware** — this comfortably satisfies the
+  "at least one" rule. See §4a for full detail; this is a fundamentally
+  different (and much stronger) position than earlier handoffs, which
+  reported zero tools integrated.
 
 ## 2. The pitch / what we're building
 
@@ -41,8 +45,11 @@ working (see §4):
    123Pay (a genuine bank-backed rail), plus a **mesh IOU voucher** (a
    signed offline promise-to-pay, explicitly NOT money movement — see §5).
 3. **On-device AI assistant** — a local LLM answering first-aid questions
-   from a bundled knowledge base, now a real 3-stage agent (triage,
+   from a bundled knowledge base, a real 3-stage agent (triage,
    action-suggestion, message-drafting) — see §4.
+
+All three are now gated at the mesh-router level by **real, on-device
+Cedar authorization** (flood/blocked-peer control) — see §4a.
 
 Target user: someone in a flood/earthquake/cyclone-affected area in India
 where cell towers are down but phones have battery and are physically
@@ -56,234 +63,234 @@ app/src/main/java/com/sankatsetu/app/
 │   ├── transport/    BLE GATT client+server, MeshForegroundService
 │   ├── protocol/     wire format: packet framing, fragmentation, IouPacket
 │   ├── crypto/       Identity (ECDSA keypair), NoiseSession, NicknameStore
-│   └── router/       MessageRouter — hop relay, dedup, TTL (the one real
-│                       choke point every packet passes through — see §4a's
-│                       Cedar note for why this matters)
+│   ├── authz/         CedarAuthorizer + MeshAuthorizer interface — real
+│   │                    on-device Cedar policy evaluation (docs/adr/0017)
+│   └── router/       MessageRouter — hop relay, dedup, TTL, and now the
+│                        Cedar flood/blocked-peer gate, all at the one real
+│                        choke point every packet passes through
 ├── data/              Room DB: MessageEntity/Dao, PeerEntity/Dao, IouEntity/Dao, AppDatabase
 ├── assistant/         KnowledgeBaseLoader, KnowledgeDocumentParser, KnowledgeChunk,
-│                       KnowledgeRetriever (BM25+TF-IDF), AssistantEngine (now a
-│                       3-stage on-device agent, see §4), MediaPipeLlmAssistant
+│                       KnowledgeRetriever (BM25+TF-IDF), AssistantEngine (3-stage
+│                       on-device agent), MediaPipeLlmAssistant
 ├── payments/          UssdDialer, IouManager
-├── di/                AppContainer — hand-rolled DI, owns singletons + knowledgeBase
+├── di/                AppContainer — hand-rolled DI, owns singletons + knowledgeBase + cedarAuthorizer
 └── ui/
-    ├── chat/          ChatListScreen (channel-roster style, "I'm Safe" broadcast,
-    │                    editable nickname), ChatThreadScreen, ChatViewModel
+    ├── chat/          ChatListScreen (MeshSearchingCard/MeshActiveCard hero
+    │                    dashboard, "I'm Safe" broadcast, editable nickname),
+    │                    ChatThreadScreen, ChatViewModel
     ├── pay/           PayScreen, PayViewModel
     ├── assistant/      AssistantScreen (agent UI + Docs browser), AssistantViewModel
-    ├── components/     SignalBars (drawn 4-bar connection glyph)
-    ├── theme/          Color.kt, Theme.kt (Material 3, IMD alert-color system), Type.kt
+    ├── components/     SignalBars, MeshRadar (new — pulsing radar sweep),
+    │                    StatusPill (new — shared status vocabulary)
+    ├── theme/          Color.kt, Theme.kt, Type.kt (Inter + JetBrains Mono),
+    │                    Shapes.kt (new), Motion.kt (new — spring presets + pressScale)
     └── MainActivity.kt  bottom-nav shell, 3 tabs, app-wide Back handling
+
+gateway/               Strands Agents SDK + Ollama reference agent (Python,
+                       standalone, mirrors AssistantEngine's pipeline — see
+                       gateway/README.md)
+scripts/               setup scripts for a new machine — see §8
 ```
 
-Also new at the project root: **`PRODUCT.md`** and **`DESIGN.md`** (written
-this session per the `impeccable` design skill's convention — read these
-for product truth and the visual-system tokens/components respectively,
-faster than re-deriving them from code).
+Also at the project root: **`PRODUCT.md`** (product truth) and
+**`DESIGN.md`** (visual-system tokens/components — **rewritten this
+session**, read it fresh even if you've seen it before, the whole palette
+changed).
 
 **Key non-obvious facts a new agent needs:**
 
 - `compileSdk`/`targetSdk` pinned to **34, not 35** — `docs/adr/0006`.
-- **JDK 11 pinned**, and as of this session specifically **Amazon
-  Corretto 11**, not Temurin — see §4a. **This pin lives in the
-  machine-local `~/.gradle/gradle.properties`, NOT in the repo** (by
-  design, per that file's own comment — it's machine-specific). **On a
-  new machine/environment, you must re-pin `org.gradle.java.home` to a
-  JDK 11 install yourself** or the build may hit a real, previously-hit
-  bug: on at least one Windows environment, JDK 17+ cannot open an NIO
-  Selector (broken AF_UNIX loopback connect), which breaks Gradle's
-  daemon IPC entirely with a cryptic "Unable to establish loopback
-  connection" error. If you hit that exact error, this is why — see
-  `docs/adr/0006`.
+- **JDK 11 pinned**, specifically **Amazon Corretto 11**. This pin lives
+  in the machine-local `~/.gradle/gradle.properties`, NOT in the repo —
+  **on a new machine you must re-pin this yourself**, see §8.
 - No Hilt/Dagger/Koin — hand-written `AppContainer.kt` (`docs/adr/0002`).
 - `minSdk = 29`.
-- No backend server. Nothing calls the internet except optional future
-  connectivity-return features (Nostr, PRD-only, not built; the Bedrock
-  "expanded guidance" bonus feature discussed but also not built yet).
+- No backend server. Nothing calls the internet.
 - LLM model file **not committed to git** (`docs/adr/0005`) — side-loaded
-  via `adb push`. A fresh device will not have the Assistant tab's
-  generation working until this is redone.
-- **Font**: `res/font/jetbrains_mono_*.ttf` (JetBrains Mono, OFL 1.1) —
-  the "instrument panel" register (peer IDs, hop counts, timestamps,
-  status words). Never used for body prose — see `docs/adr/0014`.
+  via `adb push`. See README's "Running it" section for the exact command.
+- **Typography**: Inter (bundled, `res/font/inter_variable.ttf`) for all
+  prose, JetBrains Mono for the instrument-panel register only. See
+  `DESIGN.md`.
+- **The Cedar native `.so` is committed** (`app/src/main/jniLibs/`, ~16MB
+  arm64-v8a + ~11MB armeabi-v7a) — you do **not** need to redo the Rust
+  cross-compile to build/run the app. You'd only need
+  `scripts/build-cedar-ffi.sh` again if rebuilding that `.so` from scratch
+  (e.g., a new Cedar version, or if it goes missing from the working tree).
+- **A patched `cedar-java` jar is committed** at
+  `app/libs/cedar-java-4.3.1-methodparams-stripped.jar` — the unmodified
+  Maven jar cannot be dexed by any D8 available on the last dev machine
+  (a real upstream R8/D8 bug, see `docs/adr/0017`). Don't replace it with
+  the plain Maven dependency without re-verifying this is fixed upstream.
+- **`settings.gradle.kts` has a load-bearing Guava fix** — a
+  content-filtered repository override that forces `com.google.guava:guava`
+  to resolve from its plain Maven POM instead of Gradle Module Metadata.
+  Without this, the app **crashes on real-device launch** with
+  `IncompatibleClassChangeError` the moment Cedar's `EntityTypeName.toString()`
+  runs. Full diagnosis in `docs/adr/0017`. Do not "simplify" this away.
 
 ## 4. What is actually built and verified working (on real hardware)
 
-All tested on Phone A (adb serial `ZN5224PDZ8`). Two-phone mesh testing
-still **has not been done** — see §6, this remains the single highest-risk
-untested surface in the app.
+All tested this session on a real connected Android 16 phone (Nothing
+CMF-class device). Two-phone mesh testing still **has not been done** —
+see §6, this remains the single highest-risk untested surface in the app.
+(An earlier README claimed two-phone verification with specific phone
+models and a citation to a non-existent `docs/adr/0010` — that claim was
+false and has been corrected in this session's README update. Take any
+claim of "verified on two phones" in git history before this correction
+with real skepticism.)
 
-- **BLE mesh chat**: as before (transport, Noise encryption, router,
-  outbox), plus this session: **editable nickname** (`NicknameStore`,
-  `docs/adr/0015`) — defaults to an anonymous `builder-xxxx` id, a pencil
-  icon on the Chat tab opens a rename dialog that *offers* (never
-  silently applies) the phone's real Bluetooth device name as a one-tap
-  suggestion; **"I'm Safe" broadcast** — one tap sends "I'm safe." to
-  every peer with an established session, reusing the existing 1:1
-  encrypted send path (not a new wire message type).
-- **Chat UI redesign** ("Field Radio + IMD Alert Colors", `docs/adr/0014`):
-  peer rows read as a channel roster — a drawn 4-bar signal glyph
-  (`SignalBars.kt`) instead of a colored dot, monospace status line
-  ("2 HOPS · RELAYED"). Color system now uses India's real IMD four-stage
-  disaster-alert scale (Green/Yellow/Orange/Red) instead of an invented
-  palette — `primary` is IMD Green (the mesh's own "all clear" color),
-  `error` is IMD Red (reserved for genuine danger only, never decorative).
-- **USSD/IVR payment buttons**: unchanged from last session. **Still
-  open**: after PIN entry only bank balance showed, not the full UPI
-  menu — see §5.
-- **Mesh IOU**: unchanged functionally; status pills now recolored to the
-  same IMD scale as peer status (settled=green, pending=orange,
-  rejected=red) — one vocabulary across tabs.
-- **On-device LLM Assistant — now a real 3-stage agent**
-  (`docs/adr/0016`), not just single-shot Q&A:
-  1. **Triage + action-suggestion**, merged into the existing answer
-     generation (one extra line: `Action: NONE|BROADCAST_SAFE|OPEN_PAY`,
-     placed at the **front** of the required format — this matters, see
-     the bug note below). Parsed out before display; renders as a tappable
-     `AssistChip` under the answer ("Broadcast \"I'm safe\" now" / "Open
-     Pay tab") — **never fires automatically**, always requires a tap.
-     Only two possible actions, both real, already-built app features —
-     no fabricated SOS/dispatch capability.
-  2. **Message-drafting**, a genuinely separate, on-request second LLM
-     call ("Draft a message to share" button) — not run eagerly on every
-     question, since most questions never use it and it would double
-     their latency.
-  3. Neither stage needs a network call — fully offline, same on-device
-     Gemma model as before.
-  - **Three real bugs found via actual on-device testing this session**
-    (not caught by unit tests alone — worth remembering as a pattern):
-    the Action line initially placed at the *end* of the format got
-    silently truncated off by the model's tight token budget; an early
-    version added a *second, outer* retry for a missing Action line that
-    compounded with `MediaPipeLlmAssistant`'s own internal retry loop into
-    up to **4 total generations, 86 seconds, for one query** — removed,
-    the front-loading fix alone was sufficient; the model at one point
-    echoed the prompt's own "Action rule:" heading as a literal visible
-    line in the answer — reworded the prompt + added a defensive strip.
-    Verified back to a single generation, ~15s typical, after all three
-    fixes.
-- **Docs browser** (Assistant tab, book icon in the top bar): lets the
-  person read the raw 20-file knowledge base directly, not just through a
-  generated answer — a list of documents, tap into one, scrollable full
-  text. Two-level, both steppable via system Back.
-- **App-wide Back/gesture navigation fixed**: previously any system Back
-  press exited the app outright, mid-navigation. Now steps back one level
-  at a time via `BackHandler`s in `MainActivity` and `AssistantScreen` —
-  chat thread → peer list, docs reader → docs list → Assistant home,
-  non-Chat tab → Chat tab, only *then* the system default (exit).
-- **Message timestamps**: HH:mm, monospace, next to delivery ticks —
-  previously absent from the chat UI entirely.
-- **Real bugs found and fixed this session, unrelated to the redesign
-  itself** (all from actually screenshotting the running app, not
-  assumed): Material's own stock demo-app purple was leaking onto the
-  "Send Mesh IOU" card because only top-level color roles were overridden,
-  not the `*Container` roles Material falls back to; the Assistant tab's
-  question field and send button were rendering **entirely hidden behind
-  the bottom nav bar** on first launch (an empty-state `Column` used
-  `fillMaxSize()` instead of `weight(1f)`, present only when the turn list
-  was empty — meaning a fresh install's very first screen was actually
-  unusable until caught here); the keyboard wasn't dismissing after
-  sending an Assistant question; two `Spacer(Modifier.width(...))` calls
-  inside vertical `Column`s did nothing (width has no effect on vertical
-  spacing) — question/answer bubbles and answer/label rows were visually
-  touching until fixed to `.height(...)`.
+- **BLE mesh chat**: transport, Noise encryption, router, outbox, editable
+  nickname, "I'm Safe" broadcast — all unchanged in behavior from prior
+  sessions, now gated by real Cedar authorization (see below) and wrapped
+  in a substantially revamped UI (see next bullet).
+- **Complete UI/UX revamp** (`docs/adr/0018-ui-revamp.md`) — this is the
+  single biggest change this session besides the AWS integration work.
+  Two rounds:
+  1. First round: a token-level design system (new dark-first palette,
+     Inter typography, tighter shapes, spring motion) applied to the
+     existing screen layouts.
+  2. **User feedback was direct and correct**: "this looks exactly like
+     whatever was before... very basic, wireframe kind of build." A
+     token-level reskin without changing what a screen *contains* reads
+     as a reskin, not a redesign. Second round added `MeshRadar.kt` (a
+     pulsing radar sweep replacing a static icon for the mesh's
+     "searching" state) and a proper bento-style status dashboard on the
+     Chat tab (`MeshSearchingCard`/`MeshActiveCard`) — structural
+     additions, not recoloring.
+  3. **Verified with populated data, not just empty screens**: a
+     temporary debug seed (added and removed, never shipped) populated
+     fake peers/IOUs so the populated Chat list and Pay tab could
+     actually be screenshotted. This is what the demo video will actually
+     show, and it's a materially different (and harder) bar than an empty
+     inbox — worth remembering as a QA pattern.
+  4. **A real crash found by this seeding**: opening a chat thread for a
+     fake peer threw `IllegalArgumentException: bad base-64` —
+     `ChatViewModel.onThreadOpened()` decodes the peer ID unconditionally,
+     and the fake seed's IDs weren't valid base64. Confirmed as a
+     test-harness artifact, not reachable by real data, but exactly the
+     class of bug on-device testing catches that code review doesn't.
+  5. Also fixed on direct request: the Assistant tab's icon was
+     `SmartToy` (a cartoon robot head) — swapped for a sparkle
+     (`AutoAwesome`), matching Apple's own AI-feature glyph and this
+     app's existing on-device-generated-content marker.
+  6. **Not verified**: light theme (device stayed in dark mode all
+     session), the rename/forget-peer dialogs (reuse verified components,
+     not individually screenshotted). See `DESIGN.md`'s "Known gaps."
+- **On-device LLM Assistant**: unchanged 3-stage agent behavior from prior
+  sessions (`docs/adr/0016`) — triage/action-suggestion merged into the
+  main answer, separate on-request message-drafting, both fully offline.
+- **Docs browser, back navigation, message timestamps**: unchanged from
+  prior sessions.
 
-## 4a. AWS Build It integration — the honest, current status
-
-**Updated 2026-09-19 (third pass, same day).** The network recovered
-mid-session. Corretto, Cedar, and Strands all moved from "code committed,
-nothing actually run" to **verified working end-to-end on real hardware
-(this dev machine)** — not just reasoned about. Read the detail column
-carefully: these are specific, checkable claims (exact commands, exact
-output), not summaries.
+## 4a. AWS Build It integration — verified on real hardware
 
 | Tool | Status | Detail |
 |---|---|---|
-| **Corretto** | 🟢 Verified working | Amazon Corretto 11.0.32 installed at `C:\JDKs\jdk11.0.32_10`, pinned via `~/.gradle/gradle.properties` (machine-local, per `docs/adr/0006` — not repo-committed by design). `./gradlew -version` confirms `JVM: 11.0.32.1 (Amazon.com Inc.)`. |
-| **Cedar** | 🟢 Verified working, on real hardware, real authorization decisions | The real native `libcedar_java_ffi.so` is built and committed for both `arm64-v8a` and `armeabi-v7a` — a genuine `cargo ndk` cross-compile pulling real `cedar-policy`/`cedar-policy-core` v4.13.0 from `cedar-policy/cedar`'s main branch. `./gradlew assembleDebug`/`testDebugUnitTest` (47/47) pass. **A real Android phone was connected and used this session** — installed, launched, and a temporary on-device self-test proved the actual native engine evaluates real policy text correctly: 32 rapid authorization calls against the `PUBLIC` rate-limit policy returned `allowed=true` for calls 1–30 and `allowed=false` starting at call 31, exactly matching the policy's `forbid ... messagesLastMinute > 30` rule. This is a real Cedar authorization decision on real hardware, not a JVM-test fake. Three genuine, previously-undocumented bugs found and fixed getting here (full detail in `docs/adr/0017-cedar-cross-compile.md`): (1) no working host linker on this machine (fixed with MinGW-w64 + GNU Rust toolchain); (2) `cedar-java-4.3.1.jar` can't be dexed as published on any D8 available here — a real upstream R8/D8 bug on an empty-name `MethodParameters` attribute, fixed by patching the jar; (3) the app **crashed on first real-device launch** with `IncompatibleClassChangeError` — Guava's `33.4.0-jre` coordinate secretly publishes an android-flavored Gradle Module Metadata variant that AGP force-selects regardless of the `-jre` label, requiring a `content{}`-scoped repository override in `settings.gradle.kts` to fix (a project-wide version of the fix broke Kotlin Multiplatform's own coroutines artifact resolution — had to be scoped to just the Guava module). |
-| **Strands Agents SDK** | 🟢 Verified working | `strands-agents` 1.56.0 installed (into the system Python, not a venv — see note below), Ollama installed and running with `qwen2.5:0.5b-instruct` pulled (397 MB). `python -m gateway.agent.main "how do I treat a snake bite"` produces a real, correctly-grounded generation (`Action: NONE`, genuine snake-bite content pulled from the knowledge base). **A real bug found and fixed by actually running this**: the first version gave the model a `search_kb` *tool* and told it to always call that before answering — against the real 0.5B model, it frequently didn't, and emitted the prompt's own unfilled template instead. Fixed by matching `AssistantEngine.kt`'s actual design: retrieval is a guaranteed deterministic step before generation, never a model judgment call. `search_kb` still exists as a real Strands `@tool` for optional secondary lookups. **A real, honest, not-fixed limitation** (same class as this project's own documented hallucination caveat): "the bleeding has stopped, what now" gets answered as if bleeding were still active, including advice to "perform a tourniquet" — wrong, and not auto-fixable by prompting alone at this model size. See `gateway/README.md`'s "Verified working" section for full output and detail. |
-| **PartyRock** | 🔴 Unchanged — needs the user | Still open, still needs the user in a browser at partyrock.aws. |
-| **SAM CLI** | 🔴 Unchanged — blocked on Docker | No Docker on this machine, not attempted this session. |
-| **LocalStack** | 🔴 Unchanged — same Docker dependency | Same status. |
-| **Firecracker** | ⛔ Unchanged — not applicable | Linux/KVM-only, this is Windows. |
-| **OpenSearch** | 🔴 Unchanged — not started | Still the most tractable untouched option; no Docker needed. |
+| **Corretto** | 🟢 Verified | Amazon Corretto 11.0.32, pinned via machine-local `~/.gradle/gradle.properties` (`docs/adr/0006`). `./gradlew -version` confirms `JVM: 11.0.32.1 (Amazon.com Inc.)`. |
+| **Cedar** | 🟢 Verified, real hardware, real decisions | Native `libcedar_java_ffi.so` cross-compiled from real `cedar-policy` source and **committed** for both ABIs. Wired into `MessageRouter.handleInboundBytes()`. A temporary on-device self-test (32 rapid authorization calls) proved the real native engine correctly allowed calls 1-30 and denied call 31 against the `PUBLIC` rate-limit policy — matching the policy text exactly, not a JVM-test fake. Three real bugs found and fixed getting here (full diagnosis in `docs/adr/0017`): no host linker on the dev machine (MinGW-w64 + GNU Rust toolchain), an upstream R8/D8 crash on `cedar-java-4.3.1.jar`'s `MethodParameters` attribute (fixed via a committed patched jar), and a Guava Gradle-variant-selection bug that crashed the app on first real-device launch (fixed via a `settings.gradle.kts` repository override — **do not remove this**, see §3). |
+| **Strands Agents SDK** | 🟢 Verified | `gateway/agent/` — a real `strands.Agent` + `OllamaModel` mirroring `AssistantEngine.kt`'s pipeline, running against `qwen2.5:0.5b-instruct` (the closest Ollama tag to the on-device model). Produces real, correctly-grounded generations. A real bug found and fixed: an early version gave the model a tool and told it to decide when to retrieve — a 0.5B model did this unreliably; fixed to match the Kotlin engine's actual design (retrieval is a guaranteed deterministic step, never a model judgment call). See `gateway/README.md`. |
+| **PartyRock** | 🔴 Not done — needs the user in a browser at partyrock.aws. |
+| **SAM CLI** / **LocalStack** | 🔴 Blocked on Docker (not installed on any dev machine used so far). |
+| **Firecracker** | ⛔ Not applicable — Linux/KVM-only, dev machines have been Windows. |
+| **OpenSearch** | 🔴 Not started — no Docker needed for the standalone distribution, most tractable remaining option if a 4th tool is ever wanted. |
 
-**One caveat worth a real decision from whoever continues this**:
-`strands-agents` and its dependencies were installed into this machine's
-system-wide Python 3.12 (not an isolated virtualenv), and pip reported
-version conflicts with several already-installed, unrelated packages
-(`gradio`, `fastapi`, `streamlit`, `langchain-chroma`) — none of which
-this project uses, but if this machine is also used for other Python
-work, those conflicts are real and worth resolving with a dedicated venv
-(`python -m venv gateway/.venv`, already gitignored) rather than left as
-system-wide state.
-
-**Bottom line**: three of the eight tools (Corretto, Cedar, Strands) are
-now genuinely verified working on real hardware, each with real bugs found
-and fixed along the way (documented, not glossed over) rather than merely
-designed. This is enough to satisfy the "at least one real AWS open-source
-tool" judging rule with room to spare. OpenSearch remains the one
-untouched tractable option if a fourth angle is ever wanted.
+**One open item**: `strands-agents` was installed into the dev machine's
+system-wide Python 3.12, not a venv, and pip reported conflicts with
+unrelated already-installed packages (`gradio`, `fastapi`, `streamlit`,
+`langchain-chroma`). On a fresh machine, just use a venv from the start
+(`python -m venv gateway/.venv`, already gitignored) to avoid this
+entirely.
 
 ## 5. Known problems, open questions, things that don't fully work
 
-- **USSD PIN-then-balance-only issue (OPEN, unexplained)** — unchanged
-  from last handoff. See prior section for detail; not touched this
-  session.
-- **Mesh IOU is NOT a payment feature** — still true, still worth
-  restating to avoid misrepresenting it to judges. See prior handoff's
-  full explanation (unchanged).
 - **Two-phone mesh has never been tested.** Still the single highest-risk
-  untested surface. Nothing this session touched the mesh transport
-  itself, so this remains exactly as risky as before.
-- **LLM occasionally produces a wrong/hallucinated fact** — flagged but
-  not fixed this session: a "snake bite" query at one point generated
-  "washing the wound reduces the risk of rabies transmission," which is
-  incorrect and unrelated (rabies isn't a snake-bite concern). This is a
-  prompt/generation quality issue distinct from the format bugs fixed in
-  §4 — worth a dedicated pass if time allows, flagged to the user, not
-  yet actioned.
-- **No dedicated SOS/emergency button** — still out of scope, still worth
-  considering given genre convention.
-- **`docs/adr/0010` is missing** — still unexplained, ADR numbering jumps
-  0009 → 0011.
-- Everything else from the prior handoff's §5 (retrieval heading-boost
-  heuristic, history-contamination root cause) still applies unchanged.
+  untested surface — see §1's correction of a prior false README claim.
+- **Cedar has not been tested on a *second* connected device** — the
+  32-call self-test proves the native engine works, but a real flood
+  scenario over an actual BLE link (not a synthetic loop) is untested.
+- **Light theme is untested on real hardware** — see §4/`DESIGN.md`.
+- **Mesh IOU is NOT a payment feature** — still true, still worth
+  restating to avoid misrepresenting it to judges.
+- **USSD PIN-then-balance-only issue (OPEN, unexplained)** — unchanged
+  from prior handoffs, not touched this session.
+- **LLM occasionally produces a wrong/hallucinated fact** — flagged in a
+  prior session (a snake-bite query once generated an incorrect,
+  unrelated claim about rabies), not fixed, not touched this session.
+- **No dedicated SOS/emergency button** — still out of scope.
+- **`docs/adr/0010` is missing** — ADR numbering jumps 0009 → 0011,
+  unexplained. A prior README cited this non-existent ADR as evidence for
+  a false two-phone-verification claim; that citation is now removed.
+- **`gateway/`'s Python dependencies are in the system Python, not a
+  venv** — see §4a.
 
 ## 6. Immediate next steps, in priority order
 
-1. **Pick a real path to satisfy the AWS Build It requirement** — this is
-   now the most time-pressured item given hackathon judging. Realistic
-   ranked options: (a) finish Ollama install + build the Strands reference
-   agent (no Docker, no account, offline, plan already agreed) — probably
-   fastest to a genuinely working, honest deliverable; (b) stand up
-   OpenSearch locally (no Docker needed) and wire either the Kotlin app or
-   the Strands reference agent to query it for real; (c) make a final
-   call on Cedar given the real Rust/NDK blocker in §4a — commit to the
-   cross-compile toolchain, find a pure-JVM alternative, or drop it.
-2. **Two-phone mesh test** — still the biggest untested functional risk,
-   independent of the AWS work.
-3. **Resolve or route around the USSD PIN/balance-only issue.**
-4. **Re-verify the LLM model file push/setup path on a clean checkout.**
-5. Consider the LLM hallucination issue (§5) if time allows after the AWS
-   work — it's a real quality issue in a safety-critical answer.
-6. Consider a dedicated SOS/emergency entry point.
+1. **Two-phone mesh test** — still the single biggest untested functional
+   risk in the entire app, independent of everything else. Needs a second
+   physical Android device.
+2. **Record the demo video** — the app is now visually ready for this
+   (see §4's UI revamp); the main remaining risk is the two-phone gap
+   above, since a demo showing only single-device state is a materially
+   weaker submission than one showing real mesh chat between two phones.
+3. **Verify Cedar's flood-denial behavior on a real BLE link**, not just
+   the synthetic self-test loop — ideally as part of the two-phone test.
+4. Consider a venv for `gateway/`'s Python dependencies (§4a/§5) before
+   any further Strands work.
+5. Resolve or route around the USSD PIN/balance-only issue (§5) if time
+   allows.
+6. Consider the LLM hallucination issue (§5) if time allows — it's a real
+   quality issue in a safety-critical answer.
+7. OpenSearch remains the most tractable *additional* AWS tool if a 4th
+   angle is ever wanted, though 3 already satisfies the judging rule.
 
 ## 7. Repository / handoff mechanics
 
-- Everything through commit `f052d13` is pushed to
+- Everything through commit `4fdf572` is pushed to
   **https://github.com/divyamX700/AWS-Hackathon**, `master` branch.
-  Working tree was clean (nothing uncommitted) at the time this handoff
-  was written — unlike the prior handoff, there is no pending uncommitted
-  batch to worry about.
-- Read `PRODUCT.md` and `DESIGN.md` at the repo root first — written this
-  session, faster than re-deriving product truth and the visual system
-  from code. Then `docs/PRD.md`/`docs/PLAN.md` for original scoping, then
-  ADRs in numeric order (0001 through 0016) for decision history — several
-  cost real debugging time when second-guessed, especially the toolchain
-  ones (0002, 0006) and the AWS/Cedar investigation in this file's §4a.
-- The `impeccable` design skill (https://impeccable.style, Apache-2.0) was
-  used for the visual redesign this session — its reference files aren't
-  reproduced in this repo; re-read from `~/.claude/skills/impeccable/` or
-  reinstall (`npx impeccable install`) if continuing UI work.
-- Nothing was deleted from any prior handoff's file list — all markdown,
-  all ADRs, all knowledge-base docs remain in place.
+  Working tree is clean.
+- Git push access: this session used the `mahichauhan11` GitHub account,
+  which intermittently returned `403 Permission denied` errors on push
+  even after being told it had access — if you hit this, just retry the
+  push once or twice before assuming it's a real permissions problem; it
+  resolved itself without any configuration change both times it happened
+  this session.
+- Read `DESIGN.md` fresh even if you've read a prior version — the entire
+  visual system changed this session (see §4). `PRODUCT.md` is unchanged
+  and still accurate. Then `docs/adr/` in numeric order — 0017 and 0018
+  are the two most load-bearing for anyone continuing UI or AWS-tool work.
+- `gateway/README.md` documents the Strands reference agent's own setup
+  and known limitations separately from this file.
+
+## 8. Setting up on a new machine — start here
+
+1. **JDK**: install Amazon Corretto 11 (`scripts/setup-corretto.sh`), pin
+   `org.gradle.java.home` in your own `~/.gradle/gradle.properties` (NOT
+   the repo's — see `docs/adr/0006`).
+2. **Android SDK**: `scripts/setup-android-sdk.sh` — installs
+   command-line tools, platform 34, build-tools 34.0.0, platform-tools,
+   and the NDK; writes `local.properties`. Note: the *latest* Android
+   cmdline-tools needs JDK 17 to run `sdkmanager` itself (separate from
+   the JDK 11 the actual Gradle build needs) — if you hit a
+   `UnsupportedClassVersionError` running `sdkmanager`, that's why; the
+   script already works around this by using an older cmdline-tools
+   release, but this is worth knowing if you ever touch that script.
+3. **Verify the base build works**: `./gradlew assembleDebug
+   testDebugUnitTest` — should succeed with 47/47 tests passing, using
+   the *already-committed* Cedar `.so` and patched jar (no Rust/NDK setup
+   needed for this step).
+4. **If a device is connected**: `adb install -r
+   app/build/outputs/apk/debug/app-debug.apk`, launch, and confirm no
+   crash — the Guava fix in `settings.gradle.kts` is what prevents the
+   real on-device crash described in §3, so this is a meaningful check,
+   not a formality.
+5. **Only if you need to rebuild the Cedar `.so` from scratch** (you
+   normally don't, it's committed): `scripts/build-cedar-ffi.sh`, which
+   needs a working Rust toolchain with a host linker — see
+   `docs/adr/0017`'s MinGW-w64/GNU-toolchain note if `cargo install`/
+   `cargo build` fails with a `link.exe` error on Windows.
+6. **For the Strands reference agent**: `scripts/setup-strands-agent.sh`
+   (installs Ollama + pulls `qwen2.5:0.5b-instruct` + installs
+   `strands-agents`) — consider using a venv this time, see §4a/§5.
+7. **For the on-device LLM assistant to generate real answers** (not just
+   extractive fallback): side-load the model file per README's "Running
+   it" section — this is separate from everything above.

@@ -22,9 +22,14 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
   outbox, WhatsApp-style delivery ticks (queued/sent/delivered/read), a live
   connectivity indicator, and a write-based heartbeat that detects a dead
   BLE link in ~10-15s instead of waiting on Android's own (much slower, or
-  sometimes never-firing) supervision timeout. **Verified working between
-  two real physical phones**, including full disconnect/reconnect/outbox-retry
-  cycles — see `docs/adr/0010` and `docs/adr/0011`.
+  sometimes never-firing) supervision timeout. **Verified with a real
+  multi-router integration test (JVM, in-memory links) and on single real
+  hardware** — actual two-phone-in-range mesh discovery/chat has **not**
+  been field-tested; see `handoff.md` §6, this remains the single
+  highest-risk untested surface in the app. (An earlier version of this
+  README claimed two-phone verification and cited a `docs/adr/0010` that
+  does not exist in this repo — that claim was never actually true and is
+  corrected here; ADR numbering genuinely jumps 0009 → 0011, unexplained.)
 - **Assistant**: a real on-device LLM (Qwen2.5-0.5B-Instruct, int8, via
   MediaPipe's LLM Inference API) answering from a genuine hybrid **BM25 +
   TF-IDF** retriever over a from-scratch, plain-text crisis-management
@@ -46,11 +51,15 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
   Compose UI (Chat, Pay, Assistant).
 
 Not yet built: courier envelopes (relaying via a third party's phone),
-Cedar authorization, Nostr bridge, gateway coordinator.
+Nostr bridge, gateway coordinator. Cedar authorization **is** built and
+verified on-device (see `docs/adr/0017`) — this line used to list it as
+not-yet-built; that was corrected once the real cross-compile landed.
 
 **Verified building and running, not just compiling**: `./gradlew
-assembleDebug` succeeds (~57 MB APK, MediaPipe's native libs included);
-`./gradlew testDebugUnitTest` passes all 44 unit tests, 0 failures —
+assembleDebug` succeeds (~120 MB APK — grew from an earlier ~57 MB once
+the real Cedar native `.so` for both ABIs was added, see `docs/adr/0017`;
+MediaPipe's native libs also included); `./gradlew testDebugUnitTest`
+passes all 47 unit tests, 0 failures —
 including a genuine multi-router mesh integration test (two and three
 `MessageRouter`s wired together via in-memory links, proving encode →
 fragment → relay → reassemble → dedup → deliver end to end, with real
@@ -73,13 +82,18 @@ on Android 14 by starting a Bluetooth-typed foreground service without
 checking whether Bluetooth permissions were actually granted, not just
 requested (`docs/adr/0009`'s bug note).
 
-**Verified on two real phones** (a Moto G57 Power and a Nothing CMF Phone 1):
-BLE mesh discovery, connection, encrypted chat both directions, disconnect
-detection, outbox retry on reconnect, and the on-device LLM generating real
-(if occasionally short — it's a 0.5B model) answers grounded in the
-knowledge base. The Pay tab's IOU protocol logic is unit tested and the UI
-verified on an emulator; a live two-phone IOU send/receive/verify pass is
-still pending physical hardware access.
+**Verified on real single-device hardware** (a Samsung/Nothing-class
+Android 16 phone, this session; a Moto G57 Power and a Nothing CMF Phone 1
+in earlier sessions per prior handoffs): app launch, BLE
+`MeshForegroundService` genuinely running, the on-device LLM generating
+real answers grounded in the knowledge base, the full UI revamp (see
+`docs/adr/0018`), and — new this session — real Cedar policy authorization
+decisions evaluated by a native engine on-device (`docs/adr/0017`). **Not
+verified**: two phones actually discovering and chatting with each other
+over BLE in range of one another. The Pay tab's IOU protocol logic is unit
+tested and the UI verified with real (temporarily seeded, then removed)
+data on-device; a live two-phone IOU send/receive/verify pass is still
+pending physical hardware access to a *second* device.
 
 ## Running it
 
