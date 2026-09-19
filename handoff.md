@@ -189,31 +189,40 @@ untested surface in the app.
 
 ## 4a. AWS Build It integration — the honest, current status
 
-**This is the most important section for whoever picks this up next.**
-As of this handoff, **none of the 8 required tools are integrated into
-the app's actual code**, despite a large amount of design/architecture
-work this session. Judging requires at least one, mandatory to win
-anything. Status per tool:
+**Updated 2026-09-19 (third pass, same day).** The network recovered
+mid-session. Corretto, Cedar, and Strands all moved from "code committed,
+nothing actually run" to **verified working end-to-end on real hardware
+(this dev machine)** — not just reasoned about. Read the detail column
+carefully: these are specific, checkable claims (exact commands, exact
+output), not summaries.
 
 | Tool | Status | Detail |
 |---|---|---|
-| **Corretto** | 🟡 Partially done, **not portable** | Amazon Corretto 11 downloaded, extracted to `C:\JDKs\jdk11.0.32_10` on *this* machine, and pinned via `org.gradle.java.home` in the **machine-local** `~/.gradle/gradle.properties` (confirmed via `java -version` → `OpenJDK Runtime Environment Corretto-11.0.32.10.1`). This is real, but **it is not committed anywhere in the repo** because the JDK pin is deliberately machine-specific (see `docs/adr/0006`). **On a new machine: download Corretto 11 yourself** (https://corretto.aws/downloads/), extract, pin `org.gradle.java.home` in your own user-level `gradle.properties`, verify with `./gradlew -version` shows "Corretto" not "Temurin"/other. |
-| **Cedar** | 🔴 Designed, not built — **real blocker found** | Exact integration point identified and is still correct: `MessageRouter.handleInboundBytes()` (the one choke point every mesh packet passes through) should gate on a per-sender rate/flood policy before accepting or relaying. **But**: investigated two real implementation paths and both need a Rust toolchain cross-compiled for Android (cargo-ndk, protoc for gRPC, UniFFI codegen) — (1) raw `cedar-java` (real Maven coords: `com.cedarpolicy:cedar-java:4.3.1`, **not** `4.10.0` as an earlier draft plan hallucinated) ships a JNI native lib built for desktop JVMs (Linux/Mac/Windows x86_64), not Android ARM ABIs, so it needs the same cargo-ndk cross-compile the original 2024 PRD already flagged as painful and never finished; (2) **Cedarling** (Janssen Project, initially thought to be the easier Android-native path) turns out to require building from Rust source (`jans-cedarling` on GitHub) with the full Rust toolchain + protoc + UniFFI — not a drop-in Maven/AAR dependency, no prebuilt Android artifact found. **This needs a real decision from whoever picks this up**: either commit to the Rust/NDK cross-compile toolchain (real work, real risk given this project's already-fragile Android toolchain history), or find/vendor a pure-JVM Cedar-compatible policy evaluator (may not exist for Cedar specifically — worth checking), or drop Cedar and pick a different tool from the list to satisfy the "at least one" rule. |
-| **Strands Agents SDK** | 🔴 Not started, plan agreed | Python-only, cannot run inside the Android APK. Agreed approach with the user: a real Strands agent using **Ollama** as the model provider (fully local, no AWS account, offline) as a standalone Python reference implementation in the repo, mirroring the exact 3-stage pipeline already built on-device in Kotlin (§4). This is honest, real usage of the actual SDK — not claimed to run on the phone, but a genuine artifact demonstrable in the submission video. **Ollama installer was downloading when this session ended — not confirmed installed, not confirmed working, no model pulled yet.** Next step: finish the Ollama install (`https://ollama.com/download/OllamaSetup.exe`), pull a model, `pip install strands-agents`, build the reference agent script. |
-| **PartyRock** | 🔴 Not done — needs the user | No billed AWS account needed, just the free Builder Center profile (user confirmed they have one). This was meant to be the user's own step (prototype the 3-stage agent flow in the PartyRock playground) *before* the on-device Kotlin port — that ordering got skipped; the Kotlin port happened first, directly. Still open, still needs the user in a browser at partyrock.aws. |
-| **SAM CLI** | 🔴 Blocked | `sam local start-api`/`sam local invoke` need Docker for Lambda-runtime emulation. **No Docker on this machine** (confirmed: `docker --version` → not found). Installing Docker Desktop is a heavy, admin-rights, possible-reboot operation — flagged to the user, not started without explicit confirmation given the footprint. |
-| **LocalStack** | 🔴 Blocked | Same Docker dependency as SAM CLI, same status. |
-| **Firecracker** | ⛔ Not applicable on this machine | Linux/KVM-only microVM tool. This dev environment is Windows. Categorically cannot run here — not "not done yet," a hard platform mismatch. Worth dropping from the plan entirely unless building/testing happens on a Linux box. |
-| **OpenSearch** | 🔴 Not started, feasible without Docker | The standalone OpenSearch distribution (tarball/zip) runs directly via its own bundled JVM launcher, no Docker required — just needs a real download (~600MB-1GB). Not yet downloaded or run this session. This is the most tractable *remaining* option along with Strands+Ollama. |
+| **Corretto** | 🟢 Verified working | Amazon Corretto 11.0.32 installed at `C:\JDKs\jdk11.0.32_10`, pinned via `~/.gradle/gradle.properties` (machine-local, per `docs/adr/0006` — not repo-committed by design). `./gradlew -version` confirms `JVM: 11.0.32.1 (Amazon.com Inc.)`. |
+| **Cedar** | 🟢 Verified working, on real hardware, real authorization decisions | The real native `libcedar_java_ffi.so` is built and committed for both `arm64-v8a` and `armeabi-v7a` — a genuine `cargo ndk` cross-compile pulling real `cedar-policy`/`cedar-policy-core` v4.13.0 from `cedar-policy/cedar`'s main branch. `./gradlew assembleDebug`/`testDebugUnitTest` (47/47) pass. **A real Android phone was connected and used this session** — installed, launched, and a temporary on-device self-test proved the actual native engine evaluates real policy text correctly: 32 rapid authorization calls against the `PUBLIC` rate-limit policy returned `allowed=true` for calls 1–30 and `allowed=false` starting at call 31, exactly matching the policy's `forbid ... messagesLastMinute > 30` rule. This is a real Cedar authorization decision on real hardware, not a JVM-test fake. Three genuine, previously-undocumented bugs found and fixed getting here (full detail in `docs/adr/0017-cedar-cross-compile.md`): (1) no working host linker on this machine (fixed with MinGW-w64 + GNU Rust toolchain); (2) `cedar-java-4.3.1.jar` can't be dexed as published on any D8 available here — a real upstream R8/D8 bug on an empty-name `MethodParameters` attribute, fixed by patching the jar; (3) the app **crashed on first real-device launch** with `IncompatibleClassChangeError` — Guava's `33.4.0-jre` coordinate secretly publishes an android-flavored Gradle Module Metadata variant that AGP force-selects regardless of the `-jre` label, requiring a `content{}`-scoped repository override in `settings.gradle.kts` to fix (a project-wide version of the fix broke Kotlin Multiplatform's own coroutines artifact resolution — had to be scoped to just the Guava module). |
+| **Strands Agents SDK** | 🟢 Verified working | `strands-agents` 1.56.0 installed (into the system Python, not a venv — see note below), Ollama installed and running with `qwen2.5:0.5b-instruct` pulled (397 MB). `python -m gateway.agent.main "how do I treat a snake bite"` produces a real, correctly-grounded generation (`Action: NONE`, genuine snake-bite content pulled from the knowledge base). **A real bug found and fixed by actually running this**: the first version gave the model a `search_kb` *tool* and told it to always call that before answering — against the real 0.5B model, it frequently didn't, and emitted the prompt's own unfilled template instead. Fixed by matching `AssistantEngine.kt`'s actual design: retrieval is a guaranteed deterministic step before generation, never a model judgment call. `search_kb` still exists as a real Strands `@tool` for optional secondary lookups. **A real, honest, not-fixed limitation** (same class as this project's own documented hallucination caveat): "the bleeding has stopped, what now" gets answered as if bleeding were still active, including advice to "perform a tourniquet" — wrong, and not auto-fixable by prompting alone at this model size. See `gateway/README.md`'s "Verified working" section for full output and detail. |
+| **PartyRock** | 🔴 Unchanged — needs the user | Still open, still needs the user in a browser at partyrock.aws. |
+| **SAM CLI** | 🔴 Unchanged — blocked on Docker | No Docker on this machine, not attempted this session. |
+| **LocalStack** | 🔴 Unchanged — same Docker dependency | Same status. |
+| **Firecracker** | ⛔ Unchanged — not applicable | Linux/KVM-only, this is Windows. |
+| **OpenSearch** | 🔴 Unchanged — not started | Still the most tractable untouched option; no Docker needed. |
 
-**Bottom line**: Corretto is the closest to "real and working" but needs
-manual re-setup on any new machine since it's intentionally not
-repo-committed. Cedar has a genuinely hard blocker (native Rust
-cross-compile) that needs a real decision, not just more effort. Strands
-(via Ollama) and OpenSearch are the two most promising *next* targets —
-both feasible without Docker or a billed AWS account, both fit the
-offline-first constraint, and Strands+OpenSearch together could form one
-coherent "real RAG agent, fully local" deliverable.
+**One caveat worth a real decision from whoever continues this**:
+`strands-agents` and its dependencies were installed into this machine's
+system-wide Python 3.12 (not an isolated virtualenv), and pip reported
+version conflicts with several already-installed, unrelated packages
+(`gradio`, `fastapi`, `streamlit`, `langchain-chroma`) — none of which
+this project uses, but if this machine is also used for other Python
+work, those conflicts are real and worth resolving with a dedicated venv
+(`python -m venv gateway/.venv`, already gitignored) rather than left as
+system-wide state.
+
+**Bottom line**: three of the eight tools (Corretto, Cedar, Strands) are
+now genuinely verified working on real hardware, each with real bugs found
+and fixed along the way (documented, not glossed over) rather than merely
+designed. This is enough to satisfy the "at least one real AWS open-source
+tool" judging rule with room to spare. OpenSearch remains the one
+untouched tractable option if a fourth angle is ever wanted.
 
 ## 5. Known problems, open questions, things that don't fully work
 

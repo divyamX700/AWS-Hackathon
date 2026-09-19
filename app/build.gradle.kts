@@ -129,11 +129,68 @@ dependencies {
     // tasks-genai release the same way.
     implementation("com.google.mediapipe:tasks-genai:0.10.20") // see docs/adr/0011
 
+    // --- Cedar authorization (Day 3, AWS Build It) ---
+    // NOT a plain `implementation("com.cedarpolicy:cedar-java:4.3.1")` —
+    // that coordinate is real and correctly verified against Maven Central
+    // (NOT 4.10.0, which an earlier draft plan hallucinated), but the
+    // unmodified jar cannot be dexed on this project's toolchain: both
+    // AGP 7.4.2's bundled D8 (R8 4.0.52) AND SDK 34's own bundled D8
+    // (R8 8.2.2-dev) crash with a NullPointerException on
+    // PolicySetSerializer.class — a real, documented upstream R8/D8 bug
+    // (empty-name entries in the `MethodParameters` attribute, common on
+    // compiler-generated bridge methods; fixed upstream only in R8
+    // 8.0.44+/8.1.44+, a fix apparently not present in either D8 build
+    // available on this machine). Confirmed independently by running the
+    // SDK's own `d8` tool directly on the unmodified jar. See
+    // docs/adr/0017-cedar-cross-compile.md for the full diagnosis.
+    //
+    // Fix: `app/libs/cedar-java-4.3.1-methodparams-stripped.jar` is the
+    // real, unmodified 4.3.1 jar with only the MethodParameters attribute
+    // stripped from every class (via a small ASM-based tool, not hand
+    // edited) — that attribute only carries reflection-visible parameter
+    // names, which this app never inspects via java.lang.reflect.Parameter,
+    // so removing it is behaviorally invisible. Verified: the patched jar
+    // dexes cleanly with the same `d8` invocation that crashed on the
+    // original. Declaring it as a local file dependency means Gradle's own
+    // POM-based transitive resolution doesn't run for it, so cedar-java's
+    // real runtime dependencies (Jackson for JSON, com.fizzed:jne for
+    // cedar-java's LibraryLoader — never actually exercised on Android,
+    // see CedarAuthorizer.prepareNativeLibraryPath — and Guava) are
+    // declared explicitly below instead.
+    implementation(files("libs/cedar-java-4.3.1-methodparams-stripped.jar"))
+    implementation("com.fasterxml.jackson.core:jackson-databind:2.18.2")
+    implementation("com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2")
+    implementation("com.fizzed:jne:4.3.0")
+    implementation("com.google.guava:guava:33.4.0-jre")
+
     // --- Testing ---
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+}
+
+// error_prone_annotations independently crashes the same D8 bug as
+// cedar-java did (see the Cedar dependency block above and
+// docs/adr/0017-cedar-cross-compile.md) — confirmed by dexing it alone.
+// A per-dependency `exclude` on Guava wasn't enough because more than one
+// dependency in this graph pulls it in transitively; excluding it globally
+// here is what actually keeps it out of every configuration's resolved
+// classpath. It is compile-time-only annotation metadata
+// (@Immutable, @CanIgnoreReturnValue, ...) that nothing in this app
+// inspects via reflection, so dropping it entirely is safe.
+configurations.all {
+    exclude(group = "com.google.errorprone", module = "error_prone_annotations")
+
+    // Real, on-device-confirmed bug: see the "Guava variant selection"
+    // note in settings.gradle.kts (dependencyResolutionManagement) for the
+    // full diagnosis and actual fix — Guava's "33.4.0-jre" coordinate
+    // publishes Gradle Module Metadata with an android-flavored variant
+    // that AGP's consumer attributes force-select regardless of the
+    // "-jre" label, and neither a version `force` nor a `configurations.all { attributes {...} }`
+    // override here was enough to stop it (AGP re-applies its own
+    // attributes after this block runs). The fix that actually works lives
+    // one level up, in the repository's `metadataSources`.
 }
 
 // Room's exportSchema defaults to true (correct — see docs/PRD.md §9.1's

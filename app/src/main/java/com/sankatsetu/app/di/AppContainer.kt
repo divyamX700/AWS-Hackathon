@@ -5,6 +5,7 @@ import com.sankatsetu.app.assistant.AssistantEngine
 import com.sankatsetu.app.assistant.KnowledgeBaseLoader
 import com.sankatsetu.app.assistant.MediaPipeLlmAssistant
 import com.sankatsetu.app.data.AppDatabase
+import com.sankatsetu.app.mesh.authz.CedarAuthorizer
 import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.crypto.NicknameStore
 import com.sankatsetu.app.mesh.router.MessageRouter
@@ -34,10 +35,21 @@ class AppContainer(context: Context) {
 
     val database: AppDatabase = AppDatabase.build(context)
 
+    // Must run before any com.cedarpolicy.* class is touched (its static
+    // initializer is what triggers cedar-java's native-library load) — see
+    // CedarAuthorizer.prepareNativeLibraryPath's doc and
+    // docs/adr/0017-cedar-cross-compile.md.
+    val cedarAuthorizer: CedarAuthorizer = run {
+        CedarAuthorizer.prepareNativeLibraryPath(context)
+        val policyText = context.assets.open("cedar/policies.cedar").bufferedReader().use { it.readText() }
+        CedarAuthorizer(policyText)
+    }
+
     val messageRouter: MessageRouter = MessageRouter(
         localPeerId = identity.peerId,
         scope = appScope,
-        signer = { data -> identity.sign(data) }
+        signer = { data -> identity.sign(data) },
+        cedarAuthorizer = cedarAuthorizer
     )
 
     // The model file is side-loaded, not bundled (docs/adr/0005) — on a

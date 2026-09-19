@@ -132,18 +132,24 @@ app/                    the Android app
       crypto/           identity keys (ECDSA + Curve25519), Noise XX sessions
       router/           TTL/dedup/jitter/fanout/fragment/outbox dispatch — pure Kotlin, unit-tested
       transport/        BLE advertising/scanning/GATT, foreground service
+      authz/            Cedar-based flood-control gate (CedarAuthorizer) — see docs/adr/0017
     assistant/          offline knowledge retrieval + MediaPipe LLM wrapper — mostly pure Kotlin, unit-tested
     data/               Room entities/DAOs, SQLCipher wiring
     di/                 hand-rolled composition root (AppContainer)
     ui/                 Compose screens + ViewModels (Chat, Assistant)
   src/main/assets/kb/   starter first-aid/disaster knowledge base (JSON)
-  src/test/             JVM unit tests — no device needed (44 tests)
+  src/main/assets/cedar/ Cedar policy set + schema for the mesh flood-control gate
+  src/test/             JVM unit tests — no device needed
 docs/
   PRD.md                full product spec
   PLAN.md                day-by-day build plan
   adr/                  architecture decision records
   concepts/             protocol/crypto explainers
-gateway/                 Day 3: Strands agent + SAM Local + OpenSearch coordinator (not yet built)
+gateway/                Strands Agents SDK + Ollama reference agent mirroring the on-device
+                        assistant pipeline — see gateway/README.md; satisfies the hackathon's
+                        "use a real AWS open-source tool" requirement alongside Cedar/Corretto
+scripts/                setup scripts for Corretto/Android SDK/Cedar cross-compile/Strands+Ollama
+                        (network-dependent installs, see scripts/README.md)
 reference/               gitignored clones of Bitchat/Flowpay/Briar used for porting — not part of this repo
 ```
 

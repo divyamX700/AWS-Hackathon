@@ -1,5 +1,7 @@
 package com.sankatsetu.app.mesh.router
 
+import com.sankatsetu.app.mesh.authz.MessageKind
+import com.sankatsetu.app.mesh.authz.MeshAuthorizer
 import com.sankatsetu.app.mesh.protocol.BinaryProtocol
 import com.sankatsetu.app.mesh.protocol.FragmentPacket
 import com.sankatsetu.app.mesh.protocol.MeshPacket
@@ -44,7 +46,14 @@ class MessageRouter(
     private val signer: ((ByteArray) -> ByteArray)? = null,
     private val seenCache: SeenMessageCache = SeenMessageCache(),
     private val fragmentAssembler: FragmentAssembler = FragmentAssembler(),
-    private val outbox: SenderOutbox = SenderOutbox()
+    private val outbox: SenderOutbox = SenderOutbox(),
+    // Optional on purpose: absent in every existing JVM unit test (a plain
+    // MessageRouter still relays everything, unchanged behaviour) and
+    // absent whenever CedarAuthorizer itself is unavailable (no native lib
+    // for this ABI) — see CedarAuthorizer's own fail-open doc. Real
+    // wiring (a real CedarAuthorizer) lives in AppContainer; a router test
+    // can pass a plain lambda instead, see MessageRouterAuthorizationTest.
+    private val cedarAuthorizer: MeshAuthorizer? = null
 ) {
     private val links = ConcurrentHashMap<String, MeshLink>()
     private val linksLock = Mutex()
@@ -189,6 +198,17 @@ class MessageRouter(
             return
         }
 
+        // Cedar flood/blocked-peer gate — the choke point every real (non-
+        // fragment, non-plumbing) packet passes through exactly once, after
+        // dedup so retransmits of an already-seen packet don't count twice,
+        // but before it's delivered to us or relayed any further. A denial
+        // drops the packet silently, same as a malformed one above — see
+        // docs/adr/0017 and CedarAuthorizer's fail-open doc for why this
+        // never blocks traffic when Cedar itself is unavailable.
+        cedarMessageKind(packet.type)?.let { kind ->
+            if (cedarAuthorizer?.isAllowed(packet.senderId.toHexKey(), kind) == false) return
+        }
+
         val isForUs = packet.recipientId == null || packet.recipientId.contentEquals(localPeerId)
         if (isForUs) _inboundApplicationPackets.tryEmit(packet)
 
@@ -316,6 +336,23 @@ class MessageRouter(
 
     private fun isNoiseType(type: MessageType): Boolean =
         type == MessageType.NOISE_HANDSHAKE || type == MessageType.NOISE_ENCRYPTED
+
+    /**
+     * Maps a wire [MessageType] to the Cedar resource vocabulary in
+     * `assets/cedar/policies.cedar` — see that file's header for why this
+     * is a 5-kind mapping and not the PRD's original per-channel model.
+     * Returns null for mesh plumbing (LEAVE, COURIER_ENVELOPE,
+     * REQUEST_SYNC, PING, PONG) that isn't user-facing content and isn't
+     * flood-gated at all.
+     */
+    private fun cedarMessageKind(type: MessageType): MessageKind? = when (type) {
+        MessageType.MESSAGE -> MessageKind.PUBLIC
+        MessageType.SOS_BROADCAST -> MessageKind.SOS
+        MessageType.IOU_ENVELOPE, MessageType.IOU_SETTLEMENT_ACK -> MessageKind.IOU
+        MessageType.ANNOUNCE -> MessageKind.ANNOUNCE
+        MessageType.NOISE_HANDSHAKE, MessageType.NOISE_ENCRYPTED -> MessageKind.DIRECTED
+        else -> null
+    }
 
     private fun ByteArray.toHexKey(): String = joinToString("") { "%02x".format(it) }
 
