@@ -432,7 +432,7 @@ private fun HoldToSendRow(category: SosCategory, onHoldComplete: () -> Unit, mod
 }
 
 private val SOS_LOG_ROW_HEIGHT = 62.dp
-private const val SOS_LOG_INLINE_LIMIT = 3
+private const val SOS_LOG_INLINE_LIMIT = 2
 
 /**
  * A plain row, not a card. Every entry here already sits inside a section
