@@ -51,15 +51,17 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
   Compose UI (Chat, Pay, Assistant).
 
 Not yet built: courier envelopes (relaying via a third party's phone),
-Nostr bridge, gateway coordinator. Cedar authorization **is** built and
-verified on-device (see `docs/adr/0017`) — this line used to list it as
-not-yet-built; that was corrected once the real cross-compile landed.
+an SOS/emergency broadcast (real protocol groundwork already exists and
+is unused, see `docs/TODO.md`), Nostr bridge, gateway coordinator. Cedar
+authorization **is** built and verified on-device (see `docs/adr/0017`)
+— this line used to list it as not-yet-built; that was corrected once
+the real cross-compile landed.
 
 **Verified building and running, not just compiling**: `./gradlew
 assembleDebug` succeeds (~120 MB APK — grew from an earlier ~57 MB once
 the real Cedar native `.so` for both ABIs was added, see `docs/adr/0017`;
 MediaPipe's native libs also included); `./gradlew testDebugUnitTest`
-passes all 47 unit tests, 0 failures —
+passes all 63 unit tests, 0 failures —
 including a genuine multi-router mesh integration test (two and three
 `MessageRouter`s wired together via in-memory links, proving encode →
 fragment → relay → reassemble → dedup → deliver end to end, with real
@@ -82,14 +84,16 @@ on Android 14 by starting a Bluetooth-typed foreground service without
 checking whether Bluetooth permissions were actually granted, not just
 requested (`docs/adr/0009`'s bug note).
 
-**Verified on real single-device hardware** (a Samsung/Nothing-class
-Android 16 phone, this session; a Moto G57 Power and a Nothing CMF Phone 1
-in earlier sessions per prior handoffs): app launch, BLE
+**Verified on real single-device hardware** (a Moto G57 Power across
+several sessions, plus a Nothing CMF Phone 1 and a Samsung/Nothing-class
+Android 16 phone in earlier sessions per prior handoffs): app launch, BLE
 `MeshForegroundService` genuinely running, the on-device LLM generating
-real answers grounded in the knowledge base, the full UI revamp (see
-`docs/adr/0018`), and — new this session — real Cedar policy authorization
-decisions evaluated by a native engine on-device (`docs/adr/0017`). **Not
-verified**: two phones actually discovering and chatting with each other
+real answers grounded in the knowledge base, the current "Post Office
+Passbook / Ledger Register" design (`docs/adr/0019` — the app has shipped
+three visual worlds across its history, see that ADR and `DESIGN.md` for
+the current one), and real Cedar policy authorization decisions evaluated
+by a native engine on-device (`docs/adr/0017`). **Not verified**: two
+phones actually discovering and chatting with each other
 over BLE in range of one another. The Pay tab's IOU protocol logic is unit
 tested and the UI verified with real (temporarily seeded, then removed)
 data on-device; a live two-phone IOU send/receive/verify pass is still

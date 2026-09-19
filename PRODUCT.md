@@ -55,8 +55,11 @@ tested; two-phone multi-hop mesh not yet field-tested, see
   display, sender outbox (queues if no peer is present), delivery-status
   ticks.
 - On-device LLM assistant (MediaPipe, local model file not committed to
-  git): structured multi-turn first-aid/survival Q&A grounded in a 20-file
-  bundled knowledge base, hybrid BM25+TF-IDF retrieval.
+  git): structured multi-turn first-aid/survival Q&A grounded in a 22-file
+  bundled knowledge base, hybrid BM25+TF-IDF retrieval. A question that
+  doesn't match the knowledge base (a greeting, small talk) still gets a
+  real generated reply instead of a refusal — it just isn't presented as
+  knowledge-base-grounded guidance.
 - USSD/IVR buttons that open the system dialer pre-filled for `*99#` real
   UPI payment (Android does not allow apps to auto-dial; the user taps the
   actual call button themselves — this is a platform constraint, not a

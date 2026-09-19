@@ -93,11 +93,6 @@ prior passes — a demo phone shows this app's own palette.
   register. Replaces `StatusPill` for the primary confirmed/settled/ready
   states across Chat and Pay; `StatusPill` survives for lighter secondary
   tags (CONNECTING, OFFLINE), now rectangular instead of a rounded pill.
-- **`PerforationMargin`** (`ui/components/PerforationMargin.kt`, new) — a
-  dotted spine with small circular notches down a register screen's left
-  edge (Chat's peer list, Pay's ledger, the Assistant docs index) — the
-  book-binding cue. Reading surfaces (a chat thread, an Assistant answer)
-  keep a plain margin; they're pages you read, not registers you scan.
 - **`CounterfoilEdge`** (`ui/components/CounterfoilEdge.kt`, new) — a
   dashed-border `Modifier` standing in for a receipt book's tear-off
   counterfoil. Marks a row as still pending, not yet settled. Used only on
@@ -116,8 +111,8 @@ prior passes — a demo phone shows this app's own palette.
   instead of the discarded radio metaphor's.
 - **Docs browser as a reference-index register** (`AssistantScreen.kt`) —
   each guide numbered `01`, `02`, … in tabular monospace, section counts
-  relabeled "entries," `PerforationMargin` added — the printed rules page
-  bound into the back of a real passbook, not a generic file list.
+  relabeled "entries" — the printed rules page bound into the back of a
+  real passbook, not a generic file list.
 
 ## Known gaps (honest, not fixed this pass)
 
@@ -158,6 +153,24 @@ the screen just rendered blank except the top bar, bottom nav, and a
 stray column of dots down the middle. Found only by actually screenshotting
 the running app on the connected phone, not by reading the code. Fixed by
 passing `Modifier.fillMaxHeight()` instead at every call site.
+
+**`PerforationMargin` itself was removed entirely after this fix shipped.**
+Direct user feedback: the dotted spine read as visual noise, was applied
+inconsistently (list screens only, not reading screens — a distinction
+that made sense while building it, not while using it), and — the
+deciding point — even the person who added it briefly mistook it for a
+rendering bug while testing the fix above. A decorative element a
+builder can't tell apart from a defect fails this product's own "clarity
+beats flair" bar. The file is deleted; do not re-add it without a
+different execution.
+
+**A second, unrelated color bug found after shipping**: the outgoing
+message bubble's fill (`primary`) and the "read" delivery tick's color
+(`ReadBlue`) were set to the identical hex value, making the read tick
+invisible against its own background. Fixed by reusing the stamp-ink
+green (`StatusSafe`) for the read tick instead — also more correct for
+this world's own ink logic, since green already means "confirmed"
+everywhere else. `ReadBlue` is removed from `Color.kt`.
 
 ## Superseded: the prior two worlds
 
