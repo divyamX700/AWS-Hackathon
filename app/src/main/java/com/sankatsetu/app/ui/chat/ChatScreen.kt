@@ -466,8 +466,16 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (!alert.isOutgoing && !alert.acknowledged) {
-                StatusPill("NEW", SankatSetuColors.StatusCritical)
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    formatMessageTime(alert.receivedAt),
+                    style = ConsoleReadoutStyle.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (!alert.isOutgoing && !alert.acknowledged) {
+                    Spacer(Modifier.height(4.dp))
+                    StatusPill("NEW", SankatSetuColors.StatusCritical)
+                }
             }
         }
         if (showDivider) {
