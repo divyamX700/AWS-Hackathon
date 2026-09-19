@@ -205,9 +205,20 @@ class ChatViewModel(
         // them in the sender outbox (see MessageRouter.retryOutbox's doc).
         router.retryOutbox(packet.senderId)
 
-        // Auto-initiate a handshake with newly-discovered one-hop peers so
-        // encrypted messaging is ready by the time the user opens the thread.
-        if (hopCount <= 1 && sessions[peerIdB64] == null) {
+        // Auto-initiate a handshake with any newly-discovered peer, not just
+        // one-hop ones (the original Day 1 scope — see
+        // docs/adr/0001-hackathon-scope-and-day1-slice.md, which explicitly
+        // named "the two-phone one-hop encrypted chat gate" as the Day 1 bar
+        // and multi-hop as deliberately deferred, not architecturally
+        // excluded). A NOISE_HANDSHAKE packet is directed traffic, and
+        // MessageRouter.relayDirected already floods directed traffic across
+        // every hop up to the mesh's TTL budget exactly like ANNOUNCE and
+        // MESSAGE do (see that function's own "no source-routing table yet"
+        // doc) — the transport already supports this, this call site was the
+        // only place still gating on hop count. sessions[peerIdB64] == null
+        // still bounds this to one handshake attempt per peer for the
+        // process's lifetime, same as before.
+        if (sessions[peerIdB64] == null) {
             startHandshake(peerIdB64, packet.senderId, isInitiator = isLexicographicInitiator(packet.senderId))
         }
     }

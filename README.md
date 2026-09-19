@@ -69,7 +69,7 @@ the real cross-compile landed.
 assembleDebug` succeeds (~120 MB APK — grew from an earlier ~57 MB once
 the real Cedar native `.so` for both ABIs was added, see `docs/adr/0017`;
 MediaPipe's native libs also included); `./gradlew testDebugUnitTest`
-passes all 67 unit tests, 0 failures —
+passes all 68 unit tests, 0 failures —
 including a genuine multi-router mesh integration test (two and three
 `MessageRouter`s wired together via in-memory links, proving encode →
 fragment → relay → reassemble → dedup → deliver end to end, with real

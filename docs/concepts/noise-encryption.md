@@ -89,6 +89,10 @@ encryption over a mesh of untrusted intermediaries.
 - `mesh/crypto/NoiseSession.kt` — one instance per peer, tracks handshake
   state, exposes `encrypt()`/`decrypt()` once established.
 - `ui/chat/ChatViewModel.kt` — orchestrates *when* to start a handshake
-  (on discovering a new one-hop peer via announce) and what to do with the
-  three message types (`NOISE_HANDSHAKE` in both directions, then
-  `NOISE_ENCRYPTED` for actual chat content).
+  (on discovering any new peer via announce, at any hop count — this was
+  restricted to one-hop-only through Day 1, per
+  docs/adr/0001-hackathon-scope-and-day1-slice.md's explicit scope note,
+  and widened once the router's own multi-hop directed relay was confirmed
+  working; see that file's `handleAnnounce` for the current reasoning) and
+  what to do with the three message types (`NOISE_HANDSHAKE` in both
+  directions, then `NOISE_ENCRYPTED` for actual chat content).

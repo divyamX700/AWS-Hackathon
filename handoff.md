@@ -184,6 +184,27 @@ foreground-service pattern, not copied because Briar is GPLv3).
   end-to-end including genuine multi-hop relay through a middle node. But
   that's a simulated environment. This remains the single highest-risk
   untested surface in the entire app — see §6.
+- **Real bug found and fixed 2026-09-20, not just a testing gap**:
+  `ChatViewModel.handleAnnounce` only auto-initiated the Noise handshake
+  for peers exactly one hop away (`hopCount <= 1`), a genuine Day 1 scope
+  decision (docs/adr/0001 named "the two-phone one-hop encrypted chat
+  gate" as the Day 1 bar), but it was never widened afterward despite the
+  router already supporting multi-hop directed relay (proven by the
+  existing `three-router chain relays a message` test). A peer 2+ hops
+  away would show up correctly in the peer list with the right hop count,
+  but no session ever formed and the send button would silently never
+  become usable — the app could show you a multi-hop friend without ever
+  letting you actually message them, directly undercutting the product's
+  core claim. Fixed by removing the hop-count condition; the
+  `sessions[peerIdB64] == null` guard still bounds it to one handshake
+  attempt per peer. Added a new router test,
+  `NOISE_HANDSHAKE round-trips across a three-router chain, both
+  directions`, proving the exact mechanism this now depends on (a
+  directed packet flooding 2 hops and a reply making it all the way back)
+  using the real message type, not just the generic `MESSAGE` type the
+  existing test used. Still not verified on real BLE hardware beyond one
+  hop — same limitation as everything else in this section, but the logic
+  itself is no longer artificially capped at one hop.
 
 ### Cedar authorization
 
@@ -345,7 +366,7 @@ register (hop counts, timestamps, amounts) — never body prose.
 - **SOS broadcast**: send path and local log verified on real hardware
   (see §8) — same single-device limitation as the rest of the mesh for
   an actual received alert.
-- Full unit test suite: **67/67 passing** as of this handoff
+- Full unit test suite: **68/68 passing** as of this handoff
   (`./gradlew testDebugUnitTest`).
 
 ## 4. AWS Build It integration status
