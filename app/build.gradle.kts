@@ -112,15 +112,6 @@ dependencies {
     // and docs/adr/0002-vendoring-and-porting-strategy.md.
     implementation("com.github.rweather:noise-java:master-SNAPSHOT")
 
-    // --- QR (setup handshake, officer key exchange) ---
-    // CameraX pinned to 1.3.1 for the same D8-crashes-on-newer-bytecode reason
-    // as the lifecycle downgrade above — 1.4.1 dexes fine under AGP 8.x but
-    // not AGP 7.4.2. See docs/adr/0006.
-    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
-    implementation("androidx.camera:camera-camera2:1.3.1")
-    implementation("androidx.camera:camera-lifecycle:1.3.1")
-    implementation("androidx.camera:camera-view:1.3.1")
-
     // --- On-device LLM assistant (Day 2, F2) ---
     // The model file itself is never bundled — see
     // docs/adr/0005-model-assets-not-committed.md — this is just the

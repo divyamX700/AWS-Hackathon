@@ -247,7 +247,6 @@ class MainActivity : ComponentActivity() {
 
     private fun requiredPermissions(): Array<String> {
         val permissions = mutableListOf(
-            Manifest.permission.CAMERA,
             Manifest.permission.POST_NOTIFICATIONS
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
