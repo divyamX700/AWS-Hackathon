@@ -13,6 +13,7 @@ import com.sankatsetu.app.data.AppDatabase
 import com.sankatsetu.app.mesh.authz.CedarAuthorizer
 import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.crypto.NicknameStore
+import com.sankatsetu.app.mesh.emergency.SosManager
 import com.sankatsetu.app.mesh.router.MessageRouter
 import com.sankatsetu.app.payments.IouManager
 import kotlinx.coroutines.CoroutineScope
@@ -87,6 +88,14 @@ class AppContainer(context: Context) {
         router = messageRouter,
         peerDao = database.peerDao(),
         iouDao = database.iouDao(),
+        scope = appScope
+    )
+
+    val sosManager: SosManager = SosManager(
+        identity = identity,
+        router = messageRouter,
+        peerDao = database.peerDao(),
+        sosDao = database.sosDao(),
         scope = appScope
     )
 

@@ -27,50 +27,29 @@ come back to this" pile. Remove an item once it's actually decided/built
   the user — see `docs/PRD.md`/handoff.md's "no central coordinator"
   stance). Worth scoping properly before building anything.
 
-- **An SOS broadcast, the counterpart to "I'm Safe."** One-tap "I'm Safe"
-  exists; a "help, something is wrong" equivalent does not, despite real
-  groundwork already sitting unused in the protocol:
-  `MessageType.SOS_BROADCAST` (`0x40`) is a reserved wire byte with no
-  packet payload format built for it, Cedar's policy already has an
-  `"sos"` resource kind capped at 5/minute per sender
-  (`app/src/main/assets/cedar/policies.cedar`), and
-  `ChatViewModel.observeInbound()`'s `else -> Unit` branch silently drops
-  any SOS packet that arrived today. `MainActivity.kt` still has a stale
-  comment about an "SOS tab" from the original PRD that was never built.
-  Ideation so far, not yet decided or built:
-  1. **Not a copy of "I'm Safe."** "I'm Safe" only reaches peers with a
-     completed Noise handshake — a deliberate, private, directed send.
-     SOS wants the opposite: flooded multi-hop reach to everyone in
-     range, the same way `ANNOUNCE` already floods, regardless of
-     whether a handshake ever happened. Probably shouldn't be
-     Noise-encrypted at all, since the point is anyone nearby (including
-     a stranger relaying it) can read it.
-  2. **Content**: a category picker (Medical / Trapped or can't move /
-     Fire / Flood-water / Other), not free typing — matches
-     PRODUCT.md's "used one-handed, may be frightened or injured"
-     constraint. Must never route through the LLM: instant and
-     deterministic, working even with no model side-loaded, unlike the
-     Assistant's own generation path.
-  3. **Sending needs more friction than "I'm Safe," not less.** A false
-     "I'm Safe" is harmless; a false SOS wastes attention and could
-     cause real panic. A press-and-hold with a visible countdown (the
-     same convention iOS/Android already use for their own emergency
-     SOS) resists an accidental tap in a way a single button can't.
-  4. **Receiving needs its own surface**, not a chat-thread row —
-     something that actually interrupts (this may be the one legitimate
-     modal-worthy moment in the whole app) and a small reviewable log,
-     since more than one person could be sending SOS at once.
-  5. **Honest limitation**: no GPS/location exists anywhere in this app.
-     An SOS can say what's wrong, not where, beyond hop count (a real
-     physical fact — fewer hops means physically closer — but not a
-     location). State this plainly in the UI rather than implying more
-     precision than exists.
-  6. **Placement undecided**: a genuinely separate tab (closer to the
-     original PRD's intent) vs. a persistent small affordance reachable
-     from every tab (since someone in danger might be on Pay or
-     Assistant, not Chat, when they need it) — leaning toward NOT
-     stacking a second emergency-colored button next to "I'm Safe" on
-     the Chat tab, since two competing high-alert actions on one screen
-     is exactly the cognitive-load problem the Red Cross UX research
-     (cited earlier this session) warns against. Needs a decision before
-     building.
+- **SOS broadcast — baseline built 2026-09-20, real gaps remain.** The
+  ideation below (kept for its reasoning) is now implemented: `SosPacket`
+  (`mesh/protocol/SosPacket.kt`, unsigned/unencrypted, a fixed 5-category
+  enum, never free text, never touches the LLM), `SosManager`
+  (`mesh/emergency/SosManager.kt`, mirrors `IouManager`'s own independent
+  `inboundApplicationPackets` collector rather than routing through
+  `ChatViewModel`), a `sos_alerts` Room table (migration 3→4), and Chat-tab
+  UI (`ChatScreen.kt`'s `SosReportSection`/`HoldToSendRow`/`SosLogRow`,
+  `MainActivity`'s global `SosInterruptDialog`). Placement: collapsed row
+  on the Chat tab above "I'm Safe," a `hazardEdge` stripe border and
+  correction-ink red distinguishing it from the calm green stamp button
+  below — the user's own call after weighing this file's placement
+  options. Press-and-hold (1.1s fill bar, not a circular countdown ring —
+  simpler to implement reliably under real testing time, equally legible)
+  replaces a single tap. Verified on real hardware this pass: send →
+  local log entry → confirmation text → survives an app restart (Room
+  migration and insert both genuinely committed, not just in-memory
+  state); a quick tap does not send. **Not verified**: a real two-phone
+  delivery (the interrupt dialog, the Cedar 5/minute cap actually
+  throttling relay, an unknown sender showing "Unknown device") — same
+  single-device limitation as the rest of the mesh, see `handoff.md` §6.
+  Also not built: an `SOS_ACK` reply type (so a sender could see their
+  SOS was seen) and any local send-rate limit (Cedar's cap only throttles
+  *relaying* a flood at other nodes, not this device's own repeated
+  sends — a user can locally spam their own log, which nothing currently
+  stops).

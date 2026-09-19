@@ -32,8 +32,8 @@ import javax.crypto.spec.GCMParameterSpec
  * own rule about never silently wiping a user's data.
  */
 @Database(
-    entities = [PeerEntity::class, MessageEntity::class, IouEntity::class],
-    version = 3,
+    entities = [PeerEntity::class, MessageEntity::class, IouEntity::class, SosEntity::class],
+    version = 4,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -41,6 +41,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun peerDao(): PeerDao
     abstract fun messageDao(): MessageDao
     abstract fun iouDao(): IouDao
+    abstract fun sosDao(): SosDao
 
     companion object {
         private const val DB_NAME = "sankatsetu.db"
@@ -78,12 +79,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds the SOS broadcast log table (see docs/TODO.md's SOS ideation and mesh/emergency/SosManager.kt) — a real migration, never destructive. */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """CREATE TABLE IF NOT EXISTS `sos_alerts` (
+                        `sosId` TEXT NOT NULL PRIMARY KEY,
+                        `senderPeerIdBase64` TEXT NOT NULL,
+                        `senderNickname` TEXT NOT NULL,
+                        `category` TEXT NOT NULL,
+                        `hopCount` INTEGER NOT NULL,
+                        `receivedAt` INTEGER NOT NULL,
+                        `acknowledged` INTEGER NOT NULL,
+                        `isOutgoing` INTEGER NOT NULL
+                    )"""
+                )
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_sos_alerts_receivedAt` ON `sos_alerts` (`receivedAt`)")
+            }
+        }
+
         fun build(context: Context): AppDatabase {
             val passphrase = loadOrCreatePassphrase(context)
             val factory = SupportFactory(SQLiteDatabase.getBytes(passphrase))
             return Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build()
         }
 

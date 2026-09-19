@@ -69,11 +69,18 @@ tested; two-phone multi-hop mesh not yet field-tested, see
   a bookkeeping/trust record, manually marked settled later. See
   handoff.md §5 for the exact scope and why this distinction matters for
   any demo claim.
+- SOS broadcast: a category-only (no free typing), press-and-hold
+  emergency report, flooded unencrypted to every phone in range rather
+  than the directed encrypted send chat/IOU use — the point is a stranger
+  relaying it can still read it. The counterpart to "I'm Safe," built
+  2026-09-20; see `docs/TODO.md` for the reasoning and honest gaps (a real
+  two-phone delivery of this is untested, same limitation as the rest of
+  the mesh).
 
 Not built / aspirational only (present in the original PRD, out of current
 scope): Cedar-authorized channels, Nostr internet-bridge for reaching
 relatives outside the affected area, the laptop-side field-coordinator
-gateway dashboard, SOS broadcast composer, multi-language UI beyond
+gateway dashboard, an SOS acknowledgment reply, multi-language UI beyond
 English. Do not assume any of these exist in code.
 
 Constraints: `compileSdk`/`targetSdk` pinned to 34 (not 35 — a real

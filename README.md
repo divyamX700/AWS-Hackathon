@@ -50,9 +50,17 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
 - Persistence (Room+SQLCipher, real migrations only) and a three-tab
   Compose UI (Chat, Pay, Assistant).
 
+- **SOS broadcast**: a one-handed, category-only (no free typing) flooded
+  emergency broadcast, the counterpart to "I'm Safe" — unsigned and
+  un-Noise-encrypted on purpose, since it's meant to reach and be
+  readable by every phone in range, including a stranger with no
+  completed handshake. Press-and-hold to send, an interrupting dialog
+  plus a reviewable log to receive. See `docs/TODO.md` for the full
+  reasoning and honest gaps (a real two-phone delivery of this is
+  untested, same limitation as the rest of the mesh).
+
 Not yet built: courier envelopes (relaying via a third party's phone),
-an SOS/emergency broadcast (real protocol groundwork already exists and
-is unused, see `docs/TODO.md`), Nostr bridge, gateway coordinator. Cedar
+Nostr bridge, gateway coordinator, an SOS acknowledgment reply. Cedar
 authorization **is** built and verified on-device (see `docs/adr/0017`)
 — this line used to list it as not-yet-built; that was corrected once
 the real cross-compile landed.
@@ -61,7 +69,7 @@ the real cross-compile landed.
 assembleDebug` succeeds (~120 MB APK — grew from an earlier ~57 MB once
 the real Cedar native `.so` for both ABIs was added, see `docs/adr/0017`;
 MediaPipe's native libs also included); `./gradlew testDebugUnitTest`
-passes all 63 unit tests, 0 failures —
+passes all 67 unit tests, 0 failures —
 including a genuine multi-router mesh integration test (two and three
 `MessageRouter`s wired together via in-memory links, proving encode →
 fragment → relay → reassemble → dedup → deliver end to end, with real

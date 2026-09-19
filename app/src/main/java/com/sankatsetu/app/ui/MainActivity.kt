@@ -39,6 +39,8 @@ import com.sankatsetu.app.ui.chat.ChatListScreen
 import com.sankatsetu.app.ui.chat.ChatThreadScreen
 import com.sankatsetu.app.ui.chat.ChatViewModel
 import com.sankatsetu.app.ui.chat.PeerUiModel
+import com.sankatsetu.app.ui.chat.SosInterruptDialog
+import com.sankatsetu.app.ui.emergency.SosViewModel
 import com.sankatsetu.app.ui.pay.PayScreen
 import com.sankatsetu.app.ui.pay.PayViewModel
 import com.sankatsetu.app.ui.theme.SankatSetuTheme
@@ -95,6 +97,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var chatViewModel: ChatViewModel
     private lateinit var assistantViewModel: AssistantViewModel
     private lateinit var payViewModel: PayViewModel
+    private lateinit var sosViewModel: SosViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -139,6 +142,16 @@ class MainActivity : ComponentActivity() {
                 }
             }
         )[PayViewModel::class.java]
+
+        sosViewModel = ViewModelProvider(
+            this,
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return SosViewModel(sosManager = app.container.sosManager) as T
+                }
+            }
+        )[SosViewModel::class.java]
 
         requestPermissions.launch(requiredPermissions())
 
@@ -196,7 +209,7 @@ class MainActivity : ComponentActivity() {
                                     Tab.CHAT -> {
                                         val thread = openThreadPeerId?.let { id -> chatState.peers.find { it.peerIdBase64 == id } }
                                         if (thread == null) {
-                                            ChatListScreen(viewModel = chatViewModel, onOpenThread = { openThreadPeerId = it.peerIdBase64 })
+                                            ChatListScreen(viewModel = chatViewModel, sosViewModel = sosViewModel, onOpenThread = { openThreadPeerId = it.peerIdBase64 })
                                         } else {
                                             ChatThreadScreen(viewModel = chatViewModel, peer = thread, onBack = { openThreadPeerId = null })
                                         }
@@ -211,6 +224,16 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                    }
+
+                    // Shown above whichever tab the person is currently on,
+                    // not just the Chat tab — someone in danger might be on
+                    // Pay or Assistant when a nearby SOS arrives. See
+                    // SosInterruptDialog's own doc for why this is the one
+                    // deliberately non-dismissible surface in the app.
+                    val sosState by sosViewModel.uiState.collectAsState()
+                    sosState.latestUnacknowledgedIncoming?.let { alert ->
+                        SosInterruptDialog(alert = alert, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) })
                     }
                 }
             }

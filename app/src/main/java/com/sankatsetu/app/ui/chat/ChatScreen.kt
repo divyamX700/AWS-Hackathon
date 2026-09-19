@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -44,17 +46,22 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.LinearEasing
@@ -62,20 +69,30 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.ui.window.DialogProperties
+import com.sankatsetu.app.data.SosEntity
+import com.sankatsetu.app.mesh.protocol.SosCategory
 import com.sankatsetu.app.ui.components.SignalBars
 import com.sankatsetu.app.ui.components.StampMark
 import com.sankatsetu.app.ui.components.StatusPill
+import com.sankatsetu.app.ui.components.hazardEdge
+import com.sankatsetu.app.ui.emergency.SosViewModel
 import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
 import com.sankatsetu.app.ui.theme.PillShape
 import com.sankatsetu.app.ui.theme.SankatSetuColors
 import com.sankatsetu.app.ui.theme.SankatSetuMotion
 import com.sankatsetu.app.ui.theme.pressScale
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 /** Peer list — the mesh's front door. Tap a peer to open [ChatThreadScreen], long-press to forget a stale one. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit) {
+fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenThread: (PeerUiModel) -> Unit) {
     val state by viewModel.uiState.collectAsState()
+    val sosState by sosViewModel.uiState.collectAsState()
     var peerToForget by remember { mutableStateOf<PeerUiModel?>(null) }
     var showRenameDialog by remember { mutableStateOf(false) }
     // Re-read on recomposition after a rename, not cached in a StateFlow —
@@ -141,6 +158,11 @@ fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit
                 }
             }
 
+            SosReportSection(
+                onSend = { category -> sosViewModel.sendSos(category) },
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+
             // The single most load-bearing pattern in the crisis-UX research
             // behind this screen (docs/PRODUCT.md, Evidence on Hand): one tap,
             // no typing, tells everyone in range you're okay. Full-width pill,
@@ -177,11 +199,23 @@ fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit
                 )
             }
 
-            if (state.peers.isEmpty()) {
-                MeshSearchingCard(modifier = Modifier.padding(16.dp, 8.dp))
-                Box(Modifier.weight(1f))
-            } else {
-                LazyColumn(contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            LazyColumn(contentPadding = PaddingValues(16.dp, 8.dp, 16.dp, 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (sosState.alerts.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Emergency log",
+                            style = ConsoleReadoutStyle,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                        )
+                    }
+                    items(sosState.alerts, key = { it.sosId }) { alert ->
+                        SosLogRow(alert)
+                    }
+                }
+                if (state.peers.isEmpty()) {
+                    item { MeshSearchingCard() }
+                } else {
                     item { MeshActiveCard(peerCount = state.peers.size, readyCount = readyPeerCount) }
                     items(state.peers, key = { it.peerIdBase64 }) { peer ->
                         PeerRow(peer, onClick = { onOpenThread(peer) }, onLongPress = { peerToForget = peer })
@@ -220,6 +254,208 @@ fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit
             }
         )
     }
+}
+
+/**
+ * The SOS send surface — the counterpart to "I'm Safe," see docs/TODO.md's
+ * ideation. Placed above "I'm Safe" (danger surfaced before calm
+ * confirmation) but deliberately not styled as a bigger version of the
+ * same button: [hazardEdge]'s stripe corner and correction-ink red instead
+ * of the stamp's rounded green, collapsed to a single low-profile row by
+ * default so it doesn't dominate a normal, non-emergency visit to this
+ * screen. Expands into a category picker on tap; each category then needs
+ * a deliberate press-and-hold (see [HoldToSendRow]), not a single tap —
+ * more friction than "I'm Safe," not less, since a false SOS wastes
+ * attention and could cause real panic where a false "I'm safe" is
+ * harmless.
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun SosReportSection(onSend: (SosCategory) -> Unit, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    var justSent by remember { mutableStateOf<SosCategory?>(null) }
+
+    LaunchedEffect(justSent) {
+        if (justSent != null) {
+            delay(4000)
+            justSent = null
+        }
+    }
+
+    Column(modifier) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(MaterialTheme.shapes.medium)
+                .hazardEdge(SankatSetuColors.StatusCritical)
+                .combinedClickable(onClick = { expanded = !expanded })
+                .padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = SankatSetuColors.StatusCritical, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "Report emergency",
+                style = MaterialTheme.typography.titleMedium,
+                color = SankatSetuColors.StatusCritical,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                contentDescription = null,
+                tint = SankatSetuColors.StatusCritical
+            )
+        }
+
+        AnimatedVisibility(visible = expanded, enter = fadeIn(), exit = fadeOut()) {
+            Column(Modifier.padding(top = 8.dp)) {
+                Text(
+                    "Reaches every phone in range, not just known peers. No location is sent, only how many hops away. Hold a category to send.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp)
+                )
+                SosCategory.entries.forEach { category ->
+                    HoldToSendRow(
+                        category = category,
+                        onHoldComplete = {
+                            onSend(category)
+                            justSent = category
+                            expanded = false
+                        },
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+                }
+            }
+        }
+
+        AnimatedVisibility(visible = justSent != null, enter = fadeIn(), exit = fadeOut()) {
+            Text(
+                "Emergency broadcast sent: ${justSent?.label}.",
+                style = MaterialTheme.typography.labelSmall,
+                color = SankatSetuColors.StatusCritical,
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 6.dp)
+            )
+        }
+    }
+}
+
+/**
+ * A press-and-hold control, filling with correction ink as it's held — the
+ * same convention iOS/Android use for their own emergency SOS. Releasing
+ * early resets to empty; only a completed hold fires [onHoldComplete].
+ * Chosen over a circular countdown ring for a simpler, more reliable
+ * implementation under real testing time — a growing fill bar is just as
+ * legible a "still holding, not yet done" signal.
+ */
+@Composable
+private fun HoldToSendRow(category: SosCategory, onHoldComplete: () -> Unit, modifier: Modifier = Modifier) {
+    val holdDurationMs = 1100
+    var progress by remember { mutableStateOf(0f) }
+    val scope = rememberCoroutineScope()
+    var holdJob by remember { mutableStateOf<Job?>(null) }
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(52.dp)
+            .clip(MaterialTheme.shapes.medium)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .pointerInput(category) {
+                detectTapGestures(
+                    onPress = {
+                        holdJob = scope.launch {
+                            val start = System.currentTimeMillis()
+                            while (isActive) {
+                                val elapsed = System.currentTimeMillis() - start
+                                progress = (elapsed / holdDurationMs.toFloat()).coerceIn(0f, 1f)
+                                if (progress >= 1f) {
+                                    onHoldComplete()
+                                    break
+                                }
+                                delay(16)
+                            }
+                        }
+                        tryAwaitRelease()
+                        holdJob?.cancel()
+                        progress = 0f
+                    }
+                )
+            }
+    ) {
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(progress)
+                .background(SankatSetuColors.StatusCritical.copy(alpha = 0.55f))
+        )
+        Text(
+            category.label,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.align(Alignment.CenterStart).padding(horizontal = 16.dp)
+        )
+    }
+}
+
+/** One row in the reviewable SOS log — correction-ink red, never the stamp's confirming green, since an SOS being visible isn't good news even once seen. */
+@Composable
+private fun SosLogRow(alert: SosEntity) {
+    val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        border = BorderStroke(1.dp, SankatSetuColors.StatusCritical.copy(alpha = 0.5f))
+    ) {
+        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = SankatSetuColors.StatusCritical, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (alert.isOutgoing) "You reported: $category" else "${alert.senderNickname}: $category",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    if (alert.isOutgoing) "Sent to everyone in range" else if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed",
+                    style = ConsoleReadoutStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (!alert.isOutgoing && !alert.acknowledged) {
+                StatusPill("NEW", SankatSetuColors.StatusCritical)
+            }
+        }
+    }
+}
+
+/**
+ * The interrupting surface for a fresh incoming SOS — deliberately not
+ * dismissible by back press or an outside tap, the one moment in this
+ * app's whole vocabulary that earns breaking that convention (see
+ * docs/TODO.md's ideation: "this may be the one legitimate modal-worthy
+ * moment in the whole app"). Shown from MainActivity above whichever tab
+ * the person is currently on, since they might not be on Chat when it
+ * arrives.
+ */
+@Composable
+fun SosInterruptDialog(alert: SosEntity, onAcknowledge: () -> Unit) {
+    val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
+    AlertDialog(
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        icon = { Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = SankatSetuColors.StatusCritical) },
+        title = { Text("Emergency: $category", color = SankatSetuColors.StatusCritical) },
+        text = {
+            Text(
+                "${alert.senderNickname} reported this ${if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed"}. " +
+                    "No location is available, only how many hops away they are."
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onAcknowledge) { Text("Acknowledge") }
+        }
+    )
 }
 
 /**

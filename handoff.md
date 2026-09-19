@@ -342,7 +342,10 @@ register (hop counts, timestamps, amounts) — never body prose.
   two-phone IOU send/receive/verify pass is still pending.
 - **USSD/IVR dialer buttons**: real, tested by the user on their own
   bank/SIM, with the PIN/balance-only issue above still open.
-- Full unit test suite: **63/63 passing** as of this handoff
+- **SOS broadcast**: send path and local log verified on real hardware
+  (see §8) — same single-device limitation as the rest of the mesh for
+  an actual received alert.
+- Full unit test suite: **67/67 passing** as of this handoff
   (`./gradlew testDebugUnitTest`).
 
 ## 4. AWS Build It integration status
@@ -399,18 +402,18 @@ requirement as closed unless there's a specific reason to add a 4th.
 ## 6. Immediate next steps, in priority order
 
 1. **Two-phone mesh test.** Still the single biggest untested functional
-   risk, independent of everything else. Needs a second physical device.
-2. **Decide on and, if there's time, build the SOS broadcast** —
-   `docs/TODO.md` has the full design thinking; real protocol/Cedar
-   groundwork already exists for it.
-3. **Record the demo video.** The app is visually stable for this; the
+   risk, independent of everything else. Needs a second physical device —
+   this is also the only way to verify SOS's receive path (§8) for real.
+2. **Record the demo video.** The app is visually stable for this; the
    two-phone gap above is the main risk to a strong demo.
-4. **Verify Cedar's flood-denial on a real BLE link**, ideally as part
+3. **Verify Cedar's flood-denial on a real BLE link**, ideally as part
    of the two-phone test.
-5. **Reconcile the Kotlin/Strands parity gap** (§4) before finalizing
+4. **Reconcile the Kotlin/Strands parity gap** (§4) before finalizing
    any submission writeup that claims the two agents match.
-6. Resolve the USSD PIN/balance-only issue if time allows.
-7. Consider the LLM hallucination issue if time allows.
+5. Resolve the USSD PIN/balance-only issue if time allows.
+6. Consider the LLM hallucination issue if time allows.
+7. Consider an `SOS_ACK` reply type and a local SOS send-rate limit if
+   time allows (§8).
 8. OpenSearch remains the most tractable *additional* AWS tool if ever
    wanted, though not required.
 
@@ -443,30 +446,52 @@ For context on what just happened, on top of everything above:
   button's copy, which was deliberately reverted back to its original
   phrasing after the user reviewed the plain-language version and
   preferred the original.
-- Ideated (not built) an SOS broadcast feature, parked in full in
-  `docs/TODO.md` — see §8.
+- Ideated, then in a follow-up session actually built, an SOS broadcast
+  feature — see §8.
 
-## 8. SOS broadcast — parked ideation, not yet built
+## 8. SOS broadcast
 
-Full detail lives in `docs/TODO.md`, kept there because it's a live
-"decide this before building" item, not settled history. Summary: it
-should **not** be built as a copy of "I'm Safe" — "I'm Safe" is a
-private, directed send to peers you've already handshaken with, while an
-SOS needs flooded, maximum-reach broadcast to everyone in range
-regardless of any prior handshake, probably unencrypted for that reason.
-Content should be a category picker (Medical / Trapped / Fire /
-Flood-water / Other), never free text, and must never route through the
-LLM (instant, deterministic, works with no model side-loaded). Sending
-should have deliberately *more* friction than "I'm Safe" (a false SOS is
-costly in a way a false "I'm Safe" isn't) — a press-and-hold with a
-countdown, matching how iOS/Android's own emergency SOS already works.
-Receiving needs its own interrupting surface and a reviewable log, not a
-chat-thread row. No GPS/location exists anywhere in this app, so an SOS
-can say what's wrong but not where, beyond hop count. Placement (a
-separate tab vs. a persistent small affordance reachable from every tab)
-is undecided — leaning against stacking a second emergency-colored button
-next to "I'm Safe" on the Chat tab, since two competing high-alert
-actions on one screen is a real cognitive-load risk for a frightened user.
+Ideated in one session, built in the next (2026-09-20), per `docs/TODO.md`'s
+now-updated entry. It is **not** a copy of "I'm Safe": "I'm Safe" is a
+private, directed send to peers you've already handshaken with
+(`ChatViewModel.broadcastImSafe`), while SOS is flooded, unencrypted,
+unsigned, maximum-reach broadcast to everyone in range regardless of any
+prior handshake — the point is a stranger relaying it can still read it.
+
+Real files: `mesh/protocol/SosPacket.kt` (a `SosCategory` 5-value enum —
+Medical/Trapped/Fire/Flood-water/Other, never free text, never touches the
+LLM), `mesh/emergency/SosManager.kt` (mirrors `IouManager`'s own pattern:
+an independent collector on `MessageRouter.inboundApplicationPackets`
+rather than routing through `ChatViewModel`), a `sos_alerts` Room table
+(migration 3→4, see `AppDatabase.kt`), and Chat-tab UI
+(`ChatScreen.kt`'s `SosReportSection`/`HoldToSendRow`/`SosLogRow`,
+`MainActivity`'s app-wide `SosInterruptDialog`, `ui/components/HazardEdge.kt`
+for the visual break from the ledger's calm vocabulary — see `DESIGN.md`).
+Sending is a collapsed row above "I'm Safe" that expands into a category
+picker, each category needing a genuine 1.1s press-and-hold (a filling bar,
+not a circular countdown ring — a deliberate simplification for reliable
+implementation under real testing time) rather than a single tap, since a
+false SOS is costly in a way a false "I'm Safe" isn't. Receiving shows a
+non-dismissible interrupt dialog (works from any tab, not just Chat) plus
+a reviewable log shared with the sender's own outgoing history. `wire uses
+MessageType.SOS_BROADCAST (0x40)`, already Cedar-gated at 5/minute per
+sender before this session (`assets/cedar/policies.cedar`) — no router or
+policy changes were needed, only the payload format and the two ends that
+were missing.
+
+**Verified on real single-device hardware this pass**: send → appears in
+the local log with the right category and "sent to everyone in range" →
+confirmation text shows and clears → survives an app force-stop and
+relaunch (proves the Room migration and insert both actually committed,
+not just in-memory state) → a quick tap does not send, only a completed
+hold does → multiple sends stack newest-first with distinct IDs. **Not
+verified** (needs the second phone, same limitation as every other mesh
+feature in this app): a real received SOS actually triggering
+`SosInterruptDialog`, an unknown (non-peer) sender correctly showing
+"Unknown device," and the Cedar 5/minute cap actually throttling a spam
+attempt at the relay hop. Also not built: an `SOS_ACK` reply type, and any
+local send-rate limit (Cedar's cap only throttles a receiving node's
+*relay* of a flood, not this device's own repeated local sends).
 
 ## 9. Setting up on a new machine
 

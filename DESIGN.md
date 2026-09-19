@@ -113,6 +113,14 @@ prior passes — a demo phone shows this app's own palette.
   each guide numbered `01`, `02`, … in tabular monospace, section counts
   relabeled "entries" — the printed rules page bound into the back of a
   real passbook, not a generic file list.
+- **`HazardEdge`** (`ui/components/HazardEdge.kt`, added for SOS broadcast,
+  see `docs/TODO.md`) — a solid border plus a diagonal hazard-stripe
+  corner marker, the SOS surface's own deliberate break from the ledger's
+  calm vocabulary: not `StampMark`'s round seal (confirmed, good news) and
+  not `counterfoilEdge`'s soft tear-dash (pending, not yet settled), but a
+  real hazard-tape convention for "something dangerous is behind this
+  line" — the one moment in this app's whole visual language that should
+  look unlike anything else on the page.
 
 ## Known gaps (honest, not fixed this pass)
 
