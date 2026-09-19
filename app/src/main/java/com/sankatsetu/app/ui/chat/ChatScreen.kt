@@ -20,17 +20,20 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -206,17 +209,47 @@ fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenT
                             "Emergency log",
                             style = ConsoleReadoutStyle,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                            modifier = Modifier.padding(top = 4.dp, bottom = 6.dp)
                         )
                     }
-                    items(sosState.alerts, key = { it.sosId }) { alert ->
-                        SosLogRow(alert)
+                    // A long-running crisis session could log many alerts —
+                    // this must never grow to push the peer list (and,
+                    // further down, an actual chat thread) off screen. Past
+                    // SOS_LOG_INLINE_LIMIT rows, the log becomes its own
+                    // small scrollable region instead of the whole screen
+                    // scrolling through an ever-growing list to reach chat.
+                    if (sosState.alerts.size <= SOS_LOG_INLINE_LIMIT) {
+                        itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
+                            SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex)
+                        }
+                    } else {
+                        item {
+                            Box(Modifier.heightIn(max = SOS_LOG_ROW_HEIGHT * SOS_LOG_INLINE_LIMIT)) {
+                                LazyColumn {
+                                    itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
+                                        SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant,
+                            modifier = Modifier.padding(top = 10.dp, bottom = 6.dp)
+                        )
                     }
                 }
                 if (state.peers.isEmpty()) {
-                    item { MeshSearchingCard() }
+                    item { MeshSearchingCard(modifier = Modifier.padding(top = if (sosState.alerts.isEmpty()) 0.dp else 4.dp)) }
                 } else {
-                    item { MeshActiveCard(peerCount = state.peers.size, readyCount = readyPeerCount) }
+                    item {
+                        PeerSummaryRow(
+                            peerCount = state.peers.size,
+                            readyCount = readyPeerCount,
+                            modifier = Modifier.padding(top = if (sosState.alerts.isEmpty()) 0.dp else 4.dp, bottom = 6.dp)
+                        )
+                    }
                     items(state.peers, key = { it.peerIdBase64 }) { peer ->
                         PeerRow(peer, onClick = { onOpenThread(peer) }, onLongPress = { peerToForget = peer })
                     }
@@ -398,18 +431,29 @@ private fun HoldToSendRow(category: SosCategory, onHoldComplete: () -> Unit, mod
     }
 }
 
-/** One row in the reviewable SOS log — correction-ink red, never the stamp's confirming green, since an SOS being visible isn't good news even once seen. */
+private val SOS_LOG_ROW_HEIGHT = 62.dp
+private const val SOS_LOG_INLINE_LIMIT = 3
+
+/**
+ * A plain row, not a card. Every entry here already sits inside a section
+ * headed "Emergency log" and separated from the rest of the screen by its
+ * own divider (see [ChatListScreen]) — giving every single row its own
+ * colored border on top of that (an earlier version of this row did
+ * exactly that) repeats the same alarm signal once per line instead of
+ * once for the section, the same "a colored stripe decorates every card"
+ * pattern flagged at https://impeccable.style/slop/. The icon tint and
+ * text color already carry the meaning; a thin hairline divider between
+ * rows is enough structure.
+ */
 @Composable
-private fun SosLogRow(alert: SosEntity) {
+private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
     val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, SankatSetuColors.StatusCritical.copy(alpha = 0.5f))
-    ) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = SankatSetuColors.StatusCritical, modifier = Modifier.size(18.dp))
+    Column(Modifier.fillMaxWidth().height(SOS_LOG_ROW_HEIGHT)) {
+        Row(
+            Modifier.fillMaxWidth().weight(1f).padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = SankatSetuColors.StatusCritical, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
@@ -425,6 +469,9 @@ private fun SosLogRow(alert: SosEntity) {
             if (!alert.isOutgoing && !alert.acknowledged) {
                 StatusPill("NEW", SankatSetuColors.StatusCritical)
             }
+        }
+        if (showDivider) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(start = 26.dp))
         }
     }
 }
@@ -526,11 +573,14 @@ private fun BlinkingCursor(color: Color, modifier: Modifier = Modifier) {
 }
 
 /**
- * The register's own summary line once at least one peer exists — a
- * running total, the way a ledger opens on its balance before the
- * individual entries, so the screen reads as "here's the state of your
- * register" before it reads as "here's a list of contacts." Sits above
- * the peer rows as the list's own header.
+ * The register's own summary line once at least one peer exists, sitting
+ * above the peer rows as the list's own header. Previously a full-width
+ * `Card` with a display-size digit — a "hero metric" treatment for a
+ * number that isn't actually the important thing on this screen, giving
+ * it the same visual weight as a real headline stat. This count is
+ * reference information, not a result to celebrate, so it now reads at
+ * the same quiet weight as the "You: nickname" row above it: a single
+ * plain line, no card, no oversized digit.
  *
  * [peerCount] is every phone ever recorded in this register, connected or
  * not — a real ledger doesn't forget an entry just because the other party
@@ -541,34 +591,21 @@ private fun BlinkingCursor(color: Color, modifier: Modifier = Modifier) {
  * right now" — see the per-row connected/handshake state this reads from.
  */
 @Composable
-private fun MeshActiveCard(peerCount: Int, readyCount: Int) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+private fun PeerSummaryRow(peerCount: Int, readyCount: Int, modifier: Modifier = Modifier) {
+    Row(
+        modifier.fillMaxWidth().padding(horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            Modifier.fillMaxWidth().padding(18.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "$peerCount",
-                    style = MaterialTheme.typography.displayLarge,
-                    color = MaterialTheme.colorScheme.primary
-                )
-                Text(
-                    if (peerCount == 1) "known device" else "known devices",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            StampMark(
-                "$readyCount READY",
-                if (readyCount > 0) SankatSetuColors.StatusSafe else SankatSetuColors.OfflineGray
-            )
-        }
+        Text(
+            "$peerCount ${if (peerCount == 1) "known device" else "known devices"}",
+            style = ConsoleReadoutStyle,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f)
+        )
+        StampMark(
+            "$readyCount READY",
+            if (readyCount > 0) SankatSetuColors.StatusSafe else SankatSetuColors.OfflineGray
+        )
     }
 }
 

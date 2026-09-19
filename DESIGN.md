@@ -120,7 +120,16 @@ prior passes — a demo phone shows this app's own palette.
   not `counterfoilEdge`'s soft tear-dash (pending, not yet settled), but a
   real hazard-tape convention for "something dangerous is behind this
   line" — the one moment in this app's whole visual language that should
-  look unlike anything else on the page.
+  look unlike anything else on the page. Used exactly once, on the
+  collapsed "Report emergency" row itself — an earlier version of this
+  pass also put a colored border on every row of the emergency log below
+  it, which on review is precisely the "a colored stripe decorates every
+  card, without marking anything useful" pattern catalogued at
+  https://impeccable.style/slop/ (their "Side-Tab Cards" example).
+  Repeating the alarm signal once per historical log line dilutes it
+  instead of reinforcing it; the log rows were changed to plain
+  divider-separated rows (`SosLogRow` in `ChatScreen.kt`) where icon tint
+  and text color alone carry the meaning.
 
 ## Known gaps (honest, not fixed this pass)
 
