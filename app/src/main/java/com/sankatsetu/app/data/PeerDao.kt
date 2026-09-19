@@ -17,8 +17,19 @@ interface PeerDao {
     @Query("SELECT * FROM peers WHERE peerIdBase64 = :peerIdBase64 LIMIT 1")
     suspend fun getByPeerId(peerIdBase64: String): PeerEntity?
 
-    @Query("UPDATE peers SET lastSeen = :timestamp, lastKnownHopCount = :hopCount WHERE peerIdBase64 = :peerIdBase64")
-    suspend fun touch(peerIdBase64: String, timestamp: Long, hopCount: Int)
+    /**
+     * Updates on every announce from an already-known peer, nickname
+     * included — a peer renaming themselves on their own phone re-announces
+     * immediately (see ChatViewModel.renameSelf), and the old version of
+     * this query only touched lastSeen/hopCount, never nickname. That meant
+     * a rename only ever showed up live via ChatViewModel's in-memory
+     * knownNicknames map, never actually saved — a cold app restart before
+     * the renamed peer's next announce would show their stale, pre-rename
+     * name again. Now the database is the same source of truth the live
+     * map already was.
+     */
+    @Query("UPDATE peers SET lastSeen = :timestamp, lastKnownHopCount = :hopCount, nickname = :nickname WHERE peerIdBase64 = :peerIdBase64")
+    suspend fun touch(peerIdBase64: String, timestamp: Long, hopCount: Int, nickname: String)
 
     /**
      * Forgets a peer record — the mesh has no concept of "delete this

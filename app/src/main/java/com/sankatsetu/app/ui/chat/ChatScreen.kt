@@ -42,6 +42,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -56,7 +57,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import com.sankatsetu.app.ui.components.SignalBars
+import com.sankatsetu.app.ui.components.StampMark
 import com.sankatsetu.app.ui.components.StatusPill
 import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
 import com.sankatsetu.app.ui.theme.PillShape
@@ -82,27 +89,41 @@ fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit
     Scaffold(
         topBar = {
             TopAppBar(
-                title = {
-                    Column {
-                        Text("Chat", style = MaterialTheme.typography.headlineSmall)
-                        Text(
-                            "You: $selfNickname",
-                            style = ConsoleReadoutStyle,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showRenameDialog = true }) {
-                        Icon(Icons.Filled.Edit, contentDescription = "Change your name")
-                    }
-                },
+                // A two-line title (name + nickname) here, against Pay/
+                // Assistant's plain one-line title, meant "Chat" itself sat
+                // higher than "Pay"/"Assistant" in their app bars — Material
+                // vertically centers the WHOLE title block, so a taller
+                // block pushes its first line above where a one-line title
+                // centers. The nickname moved out to its own row below the
+                // bar instead of stretching the title to match everywhere
+                // else, so every tab's title text lands on the same
+                // baseline. See docs/adr/0019-ledger-register-redesign.md.
+                title = { Text("Chat", style = MaterialTheme.typography.headlineSmall) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(Modifier.padding(padding).fillMaxSize()) {
+            Row(
+                Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "You: $selfNickname",
+                    style = ConsoleReadoutStyle,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
+                IconButton(onClick = { showRenameDialog = true }, modifier = Modifier.size(28.dp)) {
+                    Icon(
+                        Icons.Filled.Edit,
+                        contentDescription = "Change your name",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
             AnimatedVisibility(visible = !state.bluetoothOn, enter = fadeIn(), exit = fadeOut()) {
                 Box(
                     Modifier
@@ -113,7 +134,7 @@ fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit
                         .padding(12.dp)
                 ) {
                     Text(
-                        "Bluetooth is off — turn it on to reach nearby phones",
+                        "Bluetooth is off. Turn it on to reach nearby phones.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onErrorContainer
                     )
@@ -132,7 +153,8 @@ fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit
                 enabled = readyPeerCount > 0,
                 interactionSource = imSafeInteraction,
                 shape = MaterialTheme.shapes.large,
-                colors = ButtonDefaults.buttonColors(containerColor = SankatSetuColors.StatusSafe, contentColor = Color.Black),
+                colors = ButtonDefaults.buttonColors(containerColor = SankatSetuColors.StatusSafe, contentColor = Color.White),
+                border = BorderStroke(1.dp, Color.White.copy(alpha = 0.35f)),
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp)
@@ -201,13 +223,14 @@ fun ChatListScreen(viewModel: ChatViewModel, onOpenThread: (PeerUiModel) -> Unit
 }
 
 /**
- * The mesh's "actively working" moment when there's nothing to show yet —
- * a radar sweep (this app's own real metaphor: a radio listening for other
- * radios) inside a proper bordered panel, replacing a static icon floating
- * alone in empty space. This is the single biggest fix for the "feels like
- * a wireframe" problem a real-device review of the empty state surfaced:
- * a screen with nothing on it doesn't read as designed no matter how
- * refined its typography is. See docs/adr/0018-ui-revamp.md.
+ * The mesh's "nothing to show yet" moment, reframed for the ledger world —
+ * an unstamped blank ruled line with a blinking write-cursor, like a
+ * register waiting for its next entry, replacing the prior pass's radar
+ * sweep (that metaphor belonged to the discarded "field radio" world; a
+ * ledger doesn't have a radar, it has a page waiting to be written on).
+ * Still motion, not a frozen icon — a blank screen reads as unfinished
+ * regardless of typography — but motion drawn from this world's own
+ * vocabulary. See docs/adr/0019-ledger-register-redesign.md.
  */
 @Composable
 private fun MeshSearchingCard(modifier: Modifier = Modifier) {
@@ -218,30 +241,68 @@ private fun MeshSearchingCard(modifier: Modifier = Modifier) {
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Column(
-            Modifier.fillMaxWidth().padding(vertical = 40.dp),
+            Modifier.fillMaxWidth().padding(vertical = 40.dp, horizontal = 24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            com.sankatsetu.app.ui.components.MeshRadar(color = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.height(20.dp))
-            Text("Searching for nearby phones", style = MaterialTheme.typography.titleLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Scanning for nearby phones", style = ConsoleReadoutStyle, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                BlinkingCursor(color = MaterialTheme.colorScheme.primary)
+            }
+            Spacer(Modifier.height(2.dp))
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 10.dp)
+                    .height(1.dp)
+                    .background(MaterialTheme.colorScheme.outlineVariant)
+            )
+            Spacer(Modifier.height(18.dp))
+            Text("No entries yet", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(6.dp))
             Text(
                 "Keep Bluetooth on and stay within about 30 metres of another phone running Sankat Setu.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 32.dp)
+                modifier = Modifier.padding(horizontal = 8.dp)
             )
         }
     }
 }
 
+/** A steady on/off blink, like a cursor waiting at the end of an unfinished ledger line. */
+@Composable
+private fun BlinkingCursor(color: Color, modifier: Modifier = Modifier) {
+    val transition = rememberInfiniteTransition(label = "cursorBlink")
+    val alpha by transition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0f,
+        animationSpec = infiniteRepeatable(animation = tween(600, easing = LinearEasing), repeatMode = RepeatMode.Reverse),
+        label = "cursorAlpha"
+    )
+    Box(
+        modifier
+            .padding(start = 4.dp)
+            .width(8.dp)
+            .height(14.dp)
+            .background(color.copy(alpha = alpha))
+    )
+}
+
 /**
- * The mesh status dashboard once at least one peer exists — a real number,
- * not just a list, so the screen reads as "here's the state of your mesh"
- * before it reads as "here's a list of contacts." Sits above the peer rows
- * as the list's own header, per the bento-dashboard pattern this pass's
- * research recommended.
+ * The register's own summary line once at least one peer exists — a
+ * running total, the way a ledger opens on its balance before the
+ * individual entries, so the screen reads as "here's the state of your
+ * register" before it reads as "here's a list of contacts." Sits above
+ * the peer rows as the list's own header.
+ *
+ * [peerCount] is every phone ever recorded in this register, connected or
+ * not — a real ledger doesn't forget an entry just because the other party
+ * isn't in the room. It is deliberately NOT labelled "in range": that was
+ * a real, misleading claim in a prior version of this screen (a peer seen
+ * once, days ago, and currently unreachable still counted toward it). The
+ * [readyCount] stamp is the one number that actually means "reachable
+ * right now" — see the per-row connected/handshake state this reads from.
  */
 @Composable
 private fun MeshActiveCard(peerCount: Int, readyCount: Int) {
@@ -262,20 +323,15 @@ private fun MeshActiveCard(peerCount: Int, readyCount: Int) {
                     color = MaterialTheme.colorScheme.primary
                 )
                 Text(
-                    if (peerCount == 1) "phone in range" else "phones in range",
+                    if (peerCount == 1) "known device" else "known devices",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Column(horizontalAlignment = Alignment.End) {
-                StatusPill("$readyCount READY", if (readyCount > 0) SankatSetuColors.StatusSafe else SankatSetuColors.OfflineGray)
-                Spacer(Modifier.height(6.dp))
-                com.sankatsetu.app.ui.components.MeshRadar(
-                    color = MaterialTheme.colorScheme.primary,
-                    diameter = 44.dp,
-                    ringCount = 2
-                )
-            }
+            StampMark(
+                "$readyCount READY",
+                if (readyCount > 0) SankatSetuColors.StatusSafe else SankatSetuColors.OfflineGray
+            )
         }
     }
 }
@@ -367,7 +423,11 @@ private fun PeerRow(peer: PeerUiModel, onClick: () -> Unit, onLongPress: () -> U
             Column(Modifier.weight(1f)) {
                 Text(peer.nickname, style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
-                StatusPill(statusWord, tint)
+                if (peer.connected && peer.handshakeEstablished) {
+                    StampMark(statusWord, tint, seed = peer.peerIdBase64.hashCode())
+                } else {
+                    StatusPill(statusWord, tint)
+                }
             }
         }
     }
@@ -378,6 +438,7 @@ private fun PeerRow(peer: PeerUiModel, onClick: () -> Unit, onLongPress: () -> U
 fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> Unit) {
     val messages by viewModel.threadMessages(peer.peerIdBase64).collectAsState(initial = emptyList())
     var draft by remember { mutableStateOf("") }
+    var showClearConfirm by remember { mutableStateOf(false) }
 
     LaunchedEffect(peer.peerIdBase64) { viewModel.onThreadOpened(peer.peerIdBase64) }
 
@@ -396,6 +457,11 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = { showClearConfirm = true }) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Clear this chat")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
@@ -459,6 +525,23 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
             }
         }
     }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Clear this chat?") },
+            text = { Text("This deletes every message in this thread from your phone only. ${peer.nickname} keeps their own copy. Your peer list isn't affected.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.clearThread(peer.peerIdBase64)
+                    showClearConfirm = false
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -511,10 +594,17 @@ private fun formatMessageTime(epochMs: Long): String = messageTimeFormat.format(
 
 /**
  * WhatsApp-style delivery ticks: single grey = left this phone but not yet
- * confirmed, double grey = the peer's app decrypted it, double blue = the
- * peer opened the thread and saw it. "queued" gets a clock instead of a
- * tick since it never actually reached a radio yet — see ChatViewModel's
- * EnvelopeKind/onThreadOpened for how each transition fires.
+ * confirmed, double grey = the peer's app decrypted it, double stamp-green =
+ * the peer opened the thread and saw it — reusing the ledger's own
+ * "confirmed" ink instead of a second blue, since the outgoing bubble itself
+ * is now filled with the pen-ink accent color. A same-hue tick on a
+ * same-hue bubble is invisible, a real bug this pass found by actually
+ * being asked where the read tick went — every other build in this repo's
+ * history used a bubble color distinct from the read-tick color, so this
+ * never surfaced until the ledger world made both indigo. "queued" gets a
+ * clock instead of a tick since it never actually reached a radio yet —
+ * see ChatViewModel's EnvelopeKind/onThreadOpened for how each transition
+ * fires.
  */
 @Composable
 private fun MessageStatusGlyph(status: String) {
@@ -524,7 +614,7 @@ private fun MessageStatusGlyph(status: String) {
         "sending" -> "sending…" to onPrimaryMuted
         "sent" -> "✓" to onPrimaryMuted
         "delivered" -> "✓✓" to onPrimaryMuted
-        "read" -> "✓✓" to SankatSetuColors.ReadBlue
+        "read" -> "✓✓" to SankatSetuColors.StatusSafe
         else -> "" to onPrimaryMuted
     }
     if (glyph.isNotEmpty()) {

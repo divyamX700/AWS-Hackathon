@@ -41,7 +41,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.data.IouEntity
 import com.sankatsetu.app.payments.UssdDialer
+import com.sankatsetu.app.ui.components.StampMark
 import com.sankatsetu.app.ui.components.StatusPill
+import com.sankatsetu.app.ui.components.counterfoilEdge
 import com.sankatsetu.app.ui.theme.SankatSetuColors
 import com.sankatsetu.app.ui.theme.pressScale
 
@@ -74,18 +76,16 @@ fun PayScreen(viewModel: PayViewModel) {
     ) {
         item {
             Text(
-                "Works with no internet — USSD and IVR use your SIM's voice/USSD channel, and mesh IOUs travel over Bluetooth.",
+                "This works with no internet. USSD and IVR use your SIM's voice channel, and mesh IOUs travel over Bluetooth.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
-        // The two USSD/IVR shortcuts are equally weighted, minor actions —
-        // a side-by-side compact pair reads as one dialing toolset instead
-        // of repeating the same full-width card shape three times in a row
-        // (the "same-size cards" scaffold a design review flagged). The
-        // mesh IOU is the app's own distinct capability, so it stays the
-        // one full-width, clearly-primary card below.
+        // The core, primary ledger entries: real UPI money movement. These
+        // lead the page. The mesh IOU below is real but secondary, one
+        // entry type in the register, not a competing headline action.
+        item { LedgerSectionHeader("Pay now") }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CompactActionButton(
@@ -100,12 +100,13 @@ fun PayScreen(viewModel: PayViewModel) {
                 )
             }
         }
+
+        item { LedgerSectionHeader("Mesh IOU") }
         item {
             PayActionCard(
                 title = "Send Mesh IOU",
-                subtitle = "Sign a promise-to-pay and deliver it over Bluetooth to a nearby phone — no bank, no internet, settle later.",
-                onClick = { showComposer = !showComposer },
-                highlighted = true
+                subtitle = "A signed promise to pay, not an actual transfer. It goes to a nearby phone over Bluetooth, with no bank and no internet needed, and gets settled later.",
+                onClick = { showComposer = !showComposer }
             )
         }
 
@@ -148,6 +149,16 @@ fun PayScreen(viewModel: PayViewModel) {
 }
 
 @Composable
+private fun LedgerSectionHeader(title: String) {
+    Text(
+        title.uppercase(),
+        style = com.sankatsetu.app.ui.theme.ConsoleReadoutStyle,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+    )
+}
+
+@Composable
 private fun CompactActionButton(title: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     OutlinedButton(
@@ -160,16 +171,24 @@ private fun CompactActionButton(title: String, modifier: Modifier = Modifier, on
     }
 }
 
+/**
+ * A torn-counterfoil dashed edge, not a solid border — this card is the
+ * IOU composer trigger, and the IOU is a pending promise by definition, so
+ * even the entry point into it carries the "not yet settled" mark. See
+ * docs/adr/0019-ledger-register-redesign.md.
+ */
 @Composable
-private fun PayActionCard(title: String, subtitle: String, onClick: () -> Unit, highlighted: Boolean = false) {
+private fun PayActionCard(title: String, subtitle: String, onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     Card(
-        modifier = Modifier.fillMaxWidth().pressScale(interaction).clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressScale(interaction)
+            .counterfoilEdge(SankatSetuColors.StatusCaution.copy(alpha = 0.6f), cornerRadius = 6.dp)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick),
         shape = MaterialTheme.shapes.large,
-        colors = CardDefaults.cardColors(
-            containerColor = if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer
-        ),
-        border = if (highlighted) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        border = null
     ) {
         Column(Modifier.padding(18.dp)) {
             Text(title, style = MaterialTheme.typography.titleLarge)
@@ -177,7 +196,7 @@ private fun PayActionCard(title: String, subtitle: String, onClick: () -> Unit, 
             Text(
                 subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -200,7 +219,7 @@ private fun IouComposer(
 
             if (peers.isEmpty()) {
                 Text(
-                    "No nearby phones yet — open the Chat tab so a peer shows up here first.",
+                    "No nearby phones yet. Open the Chat tab first so a peer shows up here.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -268,12 +287,14 @@ private fun EmptySectionText(text: String) {
 }
 
 /**
- * Status reads as one status-pill vocabulary shared with the Chat tab's
- * peer rows — a settled IOU and a ready peer share the same "safe" green
- * because both mean "no action needed," a pending IOU shares
- * caution-amber with anything else in the app that means "handle this
- * soon." One vocabulary, not a per-screen palette. See
- * docs/adr/0018-ui-revamp.md.
+ * One vocabulary shared with the Chat tab's peer rows — settled shares the
+ * same stamp-ink green as a ready peer (both mean "confirmed, no action
+ * needed"), rejected shares the one reserved red. A settled or rejected
+ * entry gets the plain hairline border every ledger row has; only a still-
+ * pending IOU keeps the dashed counterfoil edge, so the mark disappears
+ * the moment it's actually resolved — the visual proof that it stopped
+ * being a promise and became a closed entry. See
+ * docs/adr/0019-ledger-register-redesign.md.
  */
 @Composable
 private fun IouCard(iou: IouEntity, onMarkSettled: (() -> Unit)? = null) {
@@ -282,22 +303,25 @@ private fun IouCard(iou: IouEntity, onMarkSettled: (() -> Unit)? = null) {
         "rejected" -> SankatSetuColors.StatusCritical to "REJECTED"
         else -> SankatSetuColors.StatusCaution to "PENDING"
     }
+    val pending = iou.status == "pending"
     Card(
-        Modifier.fillMaxWidth(),
+        Modifier
+            .fillMaxWidth()
+            .let { if (pending) it.counterfoilEdge(tint.copy(alpha = 0.6f)) else it },
         shape = MaterialTheme.shapes.medium,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        border = if (pending) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("₹${"%.2f".format(iou.amountPaise / 100.0)} — ${iou.counterpartyNickname}", style = MaterialTheme.typography.titleMedium)
+                Text("${iou.counterpartyNickname} · ₹${"%.2f".format(iou.amountPaise / 100.0)}", style = MaterialTheme.typography.titleMedium)
                 if (iou.memo.isNotBlank()) {
                     Text(iou.memo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(Modifier.height(4.dp))
-                StatusPill(statusWord, tint)
+                if (pending) StatusPill(statusWord, tint) else StampMark(statusWord, tint, seed = iou.iouId.hashCode())
             }
-            if (onMarkSettled != null && iou.status == "pending") {
+            if (onMarkSettled != null && pending) {
                 OutlinedButton(onClick = onMarkSettled, shape = MaterialTheme.shapes.small) { Text("Mark paid") }
             }
         }

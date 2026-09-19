@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
@@ -38,7 +40,7 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.runtime.Composable
@@ -52,12 +54,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.assistant.KnowledgeChunk
 import com.sankatsetu.app.assistant.SuggestedAction
+import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
 import com.sankatsetu.app.ui.theme.pressScale
 import com.sankatsetu.app.ui.theme.rememberShimmerProgress
 
@@ -80,6 +81,7 @@ fun AssistantScreen(
     var draft by remember { mutableStateOf("") }
     val keyboardController = LocalSoftwareKeyboardController.current
     var docsView by remember { mutableStateOf<DocsView>(DocsView.Closed) }
+    var showClearConfirm by remember { mutableStateOf(false) }
 
     BackHandler(enabled = docsView is DocsView.Reading) { docsView = DocsView.List }
     BackHandler(enabled = docsView is DocsView.List) { docsView = DocsView.Closed }
@@ -99,6 +101,11 @@ fun AssistantScreen(
             TopAppBar(
                 title = { Text("Assistant", style = MaterialTheme.typography.headlineSmall) },
                 actions = {
+                    if (state.turns.isNotEmpty()) {
+                        IconButton(onClick = { showClearConfirm = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Clear conversation")
+                        }
+                    }
                     IconButton(onClick = { docsView = DocsView.List }) {
                         Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Browse offline guides")
                     }
@@ -128,7 +135,7 @@ fun AssistantScreen(
                 )
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    "Ask about first aid, evacuation, or what to do in an emergency — works completely offline.",
+                    "Ask about first aid, evacuation, or what to do in an emergency. Works completely offline.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -143,8 +150,7 @@ fun AssistantScreen(
                     TurnCard(
                         turn = turn,
                         onBroadcastSafe = onBroadcastSafe,
-                        onOpenPay = onOpenPay,
-                        onDraftRequest = { viewModel.requestDraft(turn.id) }
+                        onOpenPay = onOpenPay
                     )
                 }
                 if (state.isThinking) {
@@ -200,23 +206,37 @@ fun AssistantScreen(
         }
     }
     }
+
+    if (showClearConfirm) {
+        AlertDialog(
+            onDismissRequest = { showClearConfirm = false },
+            title = { Text("Clear this conversation?") },
+            text = { Text("This removes every question and answer shown here. The assistant won't remember any of it for follow-up questions.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    viewModel.clearConversation()
+                    showClearConfirm = false
+                }) { Text("Clear") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearConfirm = false }) { Text("Cancel") }
+            }
+        )
+    }
 }
 
 /**
- * [turn.suggestedAction] and the draft-message flow are the agent's two
- * further stages beyond a plain answer — see
- * docs/adr/0016-on-device-agent-architecture.md. Neither ever fires on its
- * own: an action chip only calls [onBroadcastSafe]/[onOpenPay] on an
- * explicit tap, and a draft is only generated when the person asks for one.
+ * [turn.suggestedAction] is the agent's further stage beyond a plain
+ * answer — see docs/adr/0016-on-device-agent-architecture.md. It never
+ * fires on its own: an action chip only calls [onBroadcastSafe]/
+ * [onOpenPay] on an explicit tap.
  */
 @Composable
 private fun TurnCard(
     turn: AssistantTurn,
     onBroadcastSafe: () -> Unit,
-    onOpenPay: () -> Unit,
-    onDraftRequest: () -> Unit
+    onOpenPay: () -> Unit
 ) {
-    val clipboard = LocalClipboardManager.current
     Column(Modifier.fillMaxWidth()) {
         // The question, right-aligned like an outgoing chat bubble.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -257,7 +277,7 @@ private fun TurnCard(
                             tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            if (turn.wasGenerated) "Generated on-device" else "Direct excerpt — on-device AI unavailable right now",
+                            if (turn.wasGenerated) "Generated on-device" else "Direct excerpt. On-device AI isn't available right now.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -283,36 +303,7 @@ private fun TurnCard(
                             SuggestedAction.NONE -> Unit
                         }
                     }
-
-                    if (turn.wasGenerated) {
-                        Spacer(Modifier.height(6.dp))
-                        when {
-                            turn.draft != null -> DraftedMessageCard(draft = turn.draft, onCopy = { clipboard.setText(AnnotatedString(turn.draft)) })
-                            turn.isDrafting -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                ShimmerLine(modifier = Modifier.width(140.dp).height(14.dp))
-                            }
-                            else -> TextButton(onClick = onDraftRequest, contentPadding = PaddingValues(0.dp)) {
-                                Text("Draft a message to share", style = MaterialTheme.typography.labelLarge)
-                            }
-                        }
-                    }
                 }
-            }
-        }
-    }
-}
-
-/** The agent's drafted message, with a one-tap copy — no auto-send; the person decides where it goes (paste into any Chat thread). */
-@Composable
-private fun DraftedMessageCard(draft: String, onCopy: () -> Unit) {
-    Card(
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
-    ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(draft, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSecondaryContainer)
-            IconButton(onClick = onCopy) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy message", tint = MaterialTheme.colorScheme.onSecondaryContainer)
             }
         }
     }
@@ -404,12 +395,17 @@ private fun DocsBrowser(
                 }
             }
             else -> {
+                // Read as a reference-index register — the printed rules
+                // page bound into the back of a real passbook — rather than
+                // a generic file list: each entry numbered like an index
+                // card, section count set in the ledger's own tabular
+                // monospace. See docs/adr/0019-ledger-register-redesign.md.
                 LazyColumn(
                     Modifier.padding(padding).fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(titles) { source ->
+                    itemsIndexed(titles) { index, source ->
                         val sectionCount = bySource[source]?.size ?: 0
                         val interaction = remember { MutableInteractionSource() }
                         Card(
@@ -421,13 +417,21 @@ private fun DocsBrowser(
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                         ) {
-                            Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                                Text(source, style = MaterialTheme.typography.titleMedium)
+                            Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text(
-                                    "$sectionCount ${if (sectionCount == 1) "section" else "sections"}",
-                                    style = MaterialTheme.typography.labelSmall,
+                                    (index + 1).toString().padStart(2, '0'),
+                                    style = ConsoleReadoutStyle,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(source, style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        "$sectionCount ${if (sectionCount == 1) "entry" else "entries"}",
+                                        style = ConsoleReadoutStyle,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
                         }
                     }

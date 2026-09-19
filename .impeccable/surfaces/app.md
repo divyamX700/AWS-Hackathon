@@ -9,78 +9,115 @@ related_targets: []
 
 Whole-app visual world replacement, Operate mode (task completion, not
 persuasion) — Chat, Pay, Assistant tabs, native Jetpack Compose / Material 3.
+Second replacement of this surface's world (see git history for the prior
+"Field Radio + IMD Alert Colors" and "Apple-craft instrument panel" worlds,
+both now anti-reference, not authority).
 
 ## Audience, job, action, proof, constraints
 
 Someone in a disaster-affected area in India with no cell signal, phone in
 hand, possibly frightened or moving. Job: confirm a nearby person is safe,
 get first-aid guidance, pay for something small, settle a debt later.
-Constraint: Material 3 governs structure/navigation/interaction on Android
-(non-negotiable per platform reference); brand expresses through Material's
-theming only.
+User-confirmed constraint this round: the three offline pillars — mesh
+chat, UPI/USSD payment, on-device assistant — are the product's core, and
+must read as primary; the mesh IOU voucher is real but secondary, one
+entry type inside Pay, never its own identity. Material 3 governs
+structure/navigation/interaction on Android (non-negotiable per platform
+reference); brand expresses through Material's theming only.
 
 ## Direction contract
 
-**THESIS:** Sankat Setu's mesh is a radio relay wearing a generic chat
-UI — hop count is already radio-relay language, just not dressed as one.
-This surface refuses the category default (a calm-blue Material chat app
-indistinguishable from WhatsApp) and instead treats the phone as a field
-radio: a channel/peer list, signal-strength hop indicators, and India's own
-IMD four-stage alert taxonomy (Green/Yellow/Orange/Red) as the app's
-semantic color language, not an invented palette.
+**THESIS:** Sankat Setu is trusted the way a post-office passbook is
+trusted — a plain, physically-marked record of what happened, not a
+polished consumer app. This surface refuses the generic-chat-app default
+(rounded bubbles, floating cards, a colored dot for status) and refuses
+its own prior "field radio" costume too, and instead treats the phone as
+a bound register: ruled rows, a stamped mark for what is confirmed, a
+torn counterfoil edge for what is still pending — India's own century-old
+low-tech trust object, one a rural or disaster-affected user already
+reads without instruction.
 
-**OWN-WORLD:** Material 3 structure throughout (mandatory). Color roles
-carry IMD's four states — Green (ready/safe), Yellow (connecting/watch),
-Orange (degraded/caution), Red (offline/danger, reserved for genuine
-danger, never decorative) — mapped onto Material's tonal system, not raw
-hex swapped in. A monospace face (JetBrains Mono, sourced not
-system-default) is reserved strictly for the "instrument reading" register:
-peer IDs, hop counts, timestamps, signal readouts — never body prose or
-first-aid answer text, which stays in the system sans per Operate-mode
-convention. Peer connection state reads as a signal-bar icon (1-4 bars)
-colored by the IMD scale, replacing a plain colored dot.
+**OWN-WORLD:** Material 3 structure throughout (mandatory). Dark is the
+operating default — the scene is a phone at low battery, at night, in
+poor light — rendered as a night ledger: near-black "page" surfaces, a
+muted khaki/buff rule line standing in for a ledger's feint printed rule,
+tabular monospace (JetBrains Mono, already bundled) for every numeric or
+ID column — hop count, timestamp, amount, peer ID — because a ledger's
+numeric columns are ruled and aligned in real life, not because
+"monospace reads technical." One ink for confirmed state: a deep
+postal-indigo stamp mark, a drawn circular seal, not a hex-only color
+role — chosen because real Indian postal/bank rubber stamps run blue-
+violet or black, not red, which keeps red free for its one honest job:
+genuine danger, never decoration. Pending/unsettled state reads as a
+dashed, notched "counterfoil" edge, not a color at all. Rows are ruled
+rectangles with hairline top/bottom borders, not rounded floating cards.
+Prose (first-aid answers, labels) stays in Inter, plain and undecorated —
+Operate mode's own convention, content never wears the world's costume.
 
-**STORY:** A user glances at the Chat tab and reads it like a radio
-operator reads a channel list: who's in range, how many hops away, signal
-quality at a glance, not a colored dot they have to interpret fresh. IMD
-colors communicate severity/status instantly because the user already
-trusts that system from TV and SMS weather alerts — no new visual language
-to learn under stress. A single-tap "I'm Safe" broadcast (from the American
-Red Cross case study: the most load-bearing pattern for panic-state
-cognitive load) sits where it can be found without reading, not buried in
-a menu.
+**STORY:** A user opens Chat and reads it like a ledger page: who's on
+this page (a peer), what's been exchanged, stamped or still pending — a
+grammar already legible to anyone who has ever held a savings passbook,
+no onboarding needed. Pay reads as the actual ledger the metaphor is
+named for: UPI/USSD actions are the primary stamped rows, the IOU sits
+among them as one visually distinct counterfoil-edged row, never a
+competing tab, matching the user's own instruction that it is secondary.
+Assistant's existing knowledge-base browser becomes a reference-index
+register — the printed rules page bound into the back of a real
+passbook — while the generated answers themselves stay plain prose, never
+performing the ledger's costume.
 
-**FIRST VIEWPORT:** Chat tab. Top app bar "Sankat Setu". Below it, a
-prominent "I'm Safe" action (broadcasts to all connected peers). Peer list
-styled as a channel roster: each row shows nickname, a short identity tag,
-a 1-4 bar signal glyph colored via the IMD scale (not a dot), hop count and
-status in monospace ("2 HOPS · RELAYED" / "1 HOP · READY"), long-press to
-forget. Empty state: "Scanning for nearby phones…" with the same signal-bar
-glyph animating at zero bars, not a generic spinner.
+**FIRST VIEWPORT:** Chat tab. Top app bar "Sankat Setu." A left
+perforation margin (a thin dotted spine with small circular notches) runs
+down the screen's edge, the book-binding cue. Below the bar, "I'm Safe"
+as a full-width stamped action, not a rounded pill. Peer list as ruled
+ledger rows: nickname left, hop-count/status right-aligned in tabular
+monospace like an amount column, a drawn stamp-circle glyph left of
+confirmed/ready peers, a plain grayed line for offline ones. Empty state:
+an unstamped blank ruled page, "Scanning for nearby phones…" set in the
+same monospace a waiting ledger entry would use, not a spinner.
 
-**FORM:** Field Radio + IMD Alert Colors — chosen 2026-09-18 by the user
-from a compact decision round (three directions offered: this fusion,
-a "Field Manual / civil-defense signage" alternate, and a restrained
-evolution of the prior blue/red Material redesign) plus a confirmed
-addition ("I'm Safe" broadcast). No `concept-seed`/decision-page script was
-run: this is native Android with real-device screenshot verification and
-no confirmed image-generation tool in this session, making the web
-comp/decision-page pipeline impractical, and the user's explicit
-instruction this session was "do not deploy subagents, do everything
-yourself." Substituted real domain research (American Red Cross Emergency
-App UX case study, India's NDMA/IMD four-stage alert taxonomy, Zello/PTT
-app conventions) plus a structured `AskUserQuestion` round covering the
-same decision — disclosed here and to the user at the time.
+**FORM:** Post Office Passbook / Ledger Register — assigned by
+`impeccable concept-seed --scope direction --mode operate` (seed key
+`721b5aee`, assigned index 3 of the session's own researched, resonance-
+ranked candidate list: ham radio operator's station, relief-camp
+hand-written noticeboard, **post office passbook/ledger** [assigned],
+Indian Railways split-flap board, telegram-wire brevity, NDRF/civil-
+defense field signage, All India Radio bulletin typography). Presented to
+the user against the session's own top-ranked candidate (ham radio, as
+an "Impeccable's Pick" card, declined by the user on the honest grounds
+that a radio metaphor has no natural payment analog and would leave UPI
+feeling bolted-on) and a standing "polished category-standard" exit,
+through the structured question tool (no confirmed image-generation tool
+this session; no decision-page comp round). The catalog's six dealt
+challengers (festival lineup poster, zoo/garden guide map, origami crane
+fold sequence, iridescent cloud edge, Ikeda-style datamatics, film
+cutting-bench select rail) were fused and judged and every one declined
+on audience identification — none carry any tie to India or crisis
+response — but two donated real raises to the assigned direction: state
+shown as a physical stamp/mark rather than a color alone (from the
+cutting-bench's grease-cross/tape-flag/pin vocabulary, which a real
+passbook already does), and color confined to a narrow "active" band
+while the body stays achromatic (from the iridescent-cloud edge), which
+sharpened the decision to make postal-indigo the only stamp ink rather
+than a full color-coded row treatment. User-driven, not dice-only: the
+user's explicit constraint that the three offline pillars, not the IOU,
+must read as primary reframed how the ledger world applies to Pay before
+the direction was locked.
 
 **FINISH:** unreviewed and undocumented is unfinished; this build ends
 with the finish review, the verdict, DESIGN.md, and every shipping raster
-carrying its provenance. Finish review substituted in-thread (no subagent
-spawn, per the user's explicit instruction this session) against
-craft-floor.md and android.md, disclosed as a substitution, not silently.
+carrying its provenance. No confirmed subagent capability with a browser
+in this session for the finish-review/documenter roles; substituted
+in-thread against `craft-floor.md` and `android.md`, disclosed here and
+to the user, not silently.
 
 ## Unresolved decisions
 
-- Exact monospace face licensing/bundling (JetBrains Mono, Apache 2.0 —
-  confirmed available, bundle as a font resource).
-- Whether "I'm Safe" needs its own Room table/wire message type, or reuses
-  the existing broadcast/public-message path — resolved during build.
+- Exact stamp-circle Canvas geometry (perfect circle vs. hand-stamped
+  imperfect wobble) — resolved during build in favor of a slight,
+  consistent imperfection (rotation + radius jitter seeded per status)
+  for authenticity, kept subtle enough not to read as a bug.
+- Whether the perforation-margin motif appears on every screen or only
+  list/register screens (Chat, Pay) — resolved during build: list/register
+  screens only; the Assistant answer view and chat thread view are
+  reading surfaces, not registers, and keep a plain margin.

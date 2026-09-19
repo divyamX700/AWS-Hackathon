@@ -1,6 +1,11 @@
 package com.sankatsetu.app.di
 
+import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import com.sankatsetu.app.assistant.AssistantEngine
 import com.sankatsetu.app.assistant.KnowledgeBaseLoader
 import com.sankatsetu.app.assistant.MediaPipeLlmAssistant
@@ -13,6 +18,8 @@ import com.sankatsetu.app.payments.IouManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -82,4 +89,24 @@ class AppContainer(context: Context) {
         iouDao = database.iouDao(),
         scope = appScope
     )
+
+    // The real, live Bluetooth radio state — not to be confused with
+    // MessageRouter's connected-link count, which only exists once a BLE
+    // link has already formed. This is the one honest source for "is the
+    // radio even on," registered once at app scope rather than per-screen,
+    // so ChatUiState.bluetoothOn (see ChatViewModel) reflects the actual
+    // adapter instead of a value nothing ever updates.
+    private val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
+    private val _bluetoothOn = MutableStateFlow(bluetoothManager?.adapter?.isEnabled == true)
+    val bluetoothOn: StateFlow<Boolean> = _bluetoothOn
+
+    init {
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                _bluetoothOn.value = state == BluetoothAdapter.STATE_ON
+            }
+        }
+        context.applicationContext.registerReceiver(receiver, IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED))
+    }
 }

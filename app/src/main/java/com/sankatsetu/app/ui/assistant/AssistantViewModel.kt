@@ -17,10 +17,7 @@ data class AssistantTurn(
     val answer: String? = null, // null while the answer is still being computed
     val sources: List<AssistantSource> = emptyList(),
     val wasGenerated: Boolean = false,
-    val suggestedAction: SuggestedAction = SuggestedAction.NONE,
-    /** null = not drafted yet, "" while drafting, non-empty = the drafted message. See [AssistantViewModel.requestDraft]. */
-    val draft: String? = null,
-    val isDrafting: Boolean = false
+    val suggestedAction: SuggestedAction = SuggestedAction.NONE
 )
 
 data class AssistantUiState(
@@ -47,13 +44,25 @@ class AssistantViewModel(private val engine: AssistantEngine) : ViewModel() {
         // this is what makes a follow-up like "what about for a child?"
         // resolve against the actual preceding exchange instead of the
         // model seeing each question cold, per the multi-turn requirement.
-        // Only completed, actually-generated answers count as history: a
-        // still-pending or extractive-fallback answer isn't something the
-        // model itself said, so it shouldn't be replayed back to it as if
-        // it were.
+        // Only a completed, KB-grounded answer counts as history (sources
+        // non-empty) — a still-pending or extractive-fallback answer isn't
+        // something the model itself said, and a plain-chat answer (no KB
+        // match, see AssistantEngine.answer's general-conversation branch)
+        // isn't part of *this* crisis conversation at all. A real latency
+        // bug found by actually asking "hello" then a real question right
+        // after: before this filter, "hello" — a real generation, so it
+        // passed the old wasGenerated-only check — got threaded into the
+        // next prompt's "Conversation so far" block as irrelevant history,
+        // bloating the prompt against the model's shared 1280-token prompt+
+        // output budget and pushing it toward the rambling/retry failure
+        // mode already documented in MediaPipeLlmAssistant's own comments.
         val history = _uiState.value.turns.mapNotNull { prior ->
             val answer = prior.answer
-            if (answer != null && prior.wasGenerated) AssistantExchange(prior.question, answer) else null
+            if (answer != null && prior.wasGenerated && prior.sources.isNotEmpty()) {
+                AssistantExchange(prior.question, answer)
+            } else {
+                null
+            }
         }
 
         _uiState.value = _uiState.value.copy(
@@ -78,26 +87,15 @@ class AssistantViewModel(private val engine: AssistantEngine) : ViewModel() {
     }
 
     /**
-     * The agent's second stage, run only on request (see AssistantEngine's
-     * doc for why it's not folded into [ask]'s own call): drafts a short
-     * message the person could send over the mesh, from a completed turn.
+     * Clears the visible conversation and, just as importantly, the model's
+     * own memory of it: [ask] builds [AssistantEngine.answer]'s `history`
+     * argument from `_uiState.value.turns` on every call, so an emptied
+     * turns list is the entire mechanism — there's no separate context
+     * object to reset elsewhere. Turns were never persisted to a database
+     * in the first place (a restart already loses them); this just lets the
+     * person do it deliberately, mid-session, without restarting the app.
      */
-    fun requestDraft(turnId: String) {
-        val turn = _uiState.value.turns.find { it.id == turnId } ?: return
-        val answer = turn.answer ?: return
-        if (turn.isDrafting || turn.draft != null) return
-
-        _uiState.value = _uiState.value.copy(
-            turns = _uiState.value.turns.map { if (it.id == turnId) it.copy(isDrafting = true) else it }
-        )
-
-        viewModelScope.launch {
-            val drafted = engine.draftShareableMessage(turn.question, answer) ?: turn.question
-            _uiState.value = _uiState.value.copy(
-                turns = _uiState.value.turns.map {
-                    if (it.id == turnId) it.copy(isDrafting = false, draft = drafted) else it
-                }
-            )
-        }
+    fun clearConversation() {
+        _uiState.value = AssistantUiState()
     }
 }

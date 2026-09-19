@@ -110,7 +110,8 @@ class MainActivity : ComponentActivity() {
                         router = app.container.messageRouter,
                         peerDao = app.container.database.peerDao(),
                         messageDao = app.container.database.messageDao(),
-                        nicknameStore = app.container.nicknameStore
+                        nicknameStore = app.container.nicknameStore,
+                        bluetoothState = app.container.bluetoothOn
                     ) as T
                 }
             }

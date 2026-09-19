@@ -38,4 +38,8 @@ interface MessageDao {
 
     @Query("UPDATE messages SET readReceiptSent = 1 WHERE messageId = :messageId")
     suspend fun markReadReceiptSent(messageId: String)
+
+    /** Clears one thread's local history only — the peer's own copy, and the mesh itself, are untouched. */
+    @Query("DELETE FROM messages WHERE threadPeerIdBase64 = :peerIdBase64")
+    suspend fun deleteThread(peerIdBase64: String)
 }

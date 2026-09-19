@@ -63,7 +63,9 @@ class ChatViewModel(
     private val router: MessageRouter,
     private val peerDao: PeerDao,
     private val messageDao: MessageDao,
-    private val nicknameStore: NicknameStore
+    private val nicknameStore: NicknameStore,
+    /** The real adapter state (AppContainer.bluetoothOn) — see that property's doc for why this can't be a value ChatViewModel invents itself. */
+    private val bluetoothState: StateFlow<Boolean>
 ) : ViewModel() {
 
     // One Noise session per peer we've ever started a handshake with.
@@ -71,7 +73,6 @@ class ChatViewModel(
     private val knownNicknames = ConcurrentHashMap<String, String>()
     private val knownHopCounts = ConcurrentHashMap<String, Int>()
 
-    private val _bluetoothOn = MutableStateFlow(true)
     // Populated from router.peerLinkEvents — a live view of which peer
     // identities currently have at least one real link, independent of
     // NoiseSession.isEstablished (which, once true, never resets on its own
@@ -85,7 +86,7 @@ class ChatViewModel(
 
     init {
         viewModelScope.launch {
-            combine(peerDao.observeAll(), _bluetoothOn, _connectedPeerIds) { peers, btOn, connectedIds ->
+            combine(peerDao.observeAll(), bluetoothState, _connectedPeerIds) { peers, btOn, connectedIds ->
                 ChatUiState(
                     peers = peers.map { p ->
                         PeerUiModel(
@@ -195,7 +196,7 @@ class ChatViewModel(
                 )
             )
         } else {
-            peerDao.touch(peerIdB64, now, hopCount.toInt())
+            peerDao.touch(peerIdB64, now, hopCount.toInt(), announce.nickname)
         }
 
         // Any announce from a peer means the mesh currently has a path to
@@ -354,6 +355,11 @@ class ChatViewModel(
         // bug that made a queued-while-disconnected message look
         // identical to a delivered one).
         messageDao.updateStatus(privateMessage.messageId, if (outcome.queued) "queued" else "sent")
+    }
+
+    /** Clears one thread's local message history only — the peer keeps their own copy, and the session/peer entry itself is untouched, unlike [forgetPeer]. */
+    fun clearThread(peerIdBase64: String) {
+        viewModelScope.launch { messageDao.deleteThread(peerIdBase64) }
     }
 
     /** Removes a peer from local history — see [PeerDao.delete]'s doc for why this exists. Does not affect the peer's own device. */

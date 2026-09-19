@@ -23,7 +23,7 @@ data class AssistantAnswer(
 )
 
 private const val FALLBACK_NO_MATCH =
-    "I don't have specific guidance for this — call 112 immediately."
+    "I don't have specific guidance for this. Call 112 immediately."
 
 private const val EMERGENCY_NUMBER_REMINDER = "\n\nCall 112 immediately if this is a medical or life-threatening emergency."
 
@@ -73,6 +73,24 @@ class AssistantEngine(
     suspend fun answer(query: String, history: List<AssistantExchange> = emptyList()): AssistantAnswer {
         val matches = KnowledgeRetriever.search(query, knowledgeBase, topK = 3)
         if (matches.isEmpty()) {
+            // No knowledge-base match doesn't mean no answer is possible — a
+            // real bug found by actually asking the app "hello": this used
+            // to return FALLBACK_NO_MATCH unconditionally, meaning the LLM
+            // never even ran for anything outside the 22-file crisis KB, so
+            // plain conversation was impossible. The KB is what GROUNDS a
+            // first-aid answer in a real source (never skipped when it has
+            // something relevant — see the branch below this one), not a
+            // gate on whether the model gets to respond at all. When there's
+            // nothing to ground an answer in, the model still runs, just on
+            // a plain conversational prompt instead of the structured
+            // guide format, and the UI is told sources is empty so it never
+            // implies this came from the knowledge base.
+            if (llm.isAvailable) {
+                val raw = llm.generate(buildGeneralPrompt(query, history))?.trim()?.normalizeLiteralNewlines()
+                if (!raw.isNullOrEmpty()) {
+                    return AssistantAnswer(raw, emptyList(), wasGenerated = true)
+                }
+            }
             return AssistantAnswer(FALLBACK_NO_MATCH, emptyList(), wasGenerated = false)
         }
 
@@ -118,31 +136,6 @@ class AssistantEngine(
     }
 
     /**
-     * The second agent stage: drafts a short message the person could send
-     * over the mesh, from a completed turn — a deliberately separate,
-     * explicit call (the UI only fires this when the person taps "Draft a
-     * message to share" on an answer), not run eagerly on every question.
-     * Merging it into [answer]'s own call would double that call's latency
-     * for a feature most questions never use; see docs/adr/0016.
-     */
-    suspend fun draftShareableMessage(question: String, answer: String): String? {
-        if (!llm.isAvailable) return null
-        val prompt = """
-            |Instruction: Write ONE short message (max 2 sentences, plain language) this
-            |person could send to a family member over a text or chat app, summarizing
-            |their situation and what they're doing about it. Base it only on the
-            |question and guidance below — do not invent facts, names, or locations not
-            |present in them. Output only the message itself, nothing else.
-            |
-            |Question: $question
-            |Guidance given: $answer
-            |
-            |Message:
-        """.trimMargin()
-        return llm.generate(prompt)?.trim()?.takeIf { it.isNotEmpty() }
-    }
-
-    /**
      * Asks for a short structured guide — situation + numbered steps + what
      * to avoid + the 112 reminder — synthesized from the context in the
      * model's own words, not the raw retrieved passages pasted back, PLUS
@@ -174,6 +167,40 @@ class AssistantEngine(
                 "\n\n"
         }
 
+        return buildGuidePrompt(query, context, historyBlock)
+    }
+
+    /**
+     * Plain conversation, used only when [KnowledgeRetriever] found nothing
+     * to ground an answer in — see [answer]'s doc for why this exists at
+     * all. Deliberately not the structured Action/Situation/numbered-step
+     * format: that format is a promise the answer is grounded in the crisis
+     * KB, and this path by definition isn't. A short honest instruction
+     * (say so instead of inventing medical/disaster facts) is the only
+     * safety rule that survives from [buildPrompt] here.
+     */
+    private fun buildGeneralPrompt(query: String, history: List<AssistantExchange>): String {
+        val historyBlock = if (history.isEmpty()) {
+            ""
+        } else {
+            val recent = history.takeLast(MAX_HISTORY_TURNS)
+            "Conversation so far:\n" + recent.joinToString("\n") { "User: ${it.question}\nGuide: ${it.answer}" } + "\n\n"
+        }
+        return """
+            |Instruction: You are a calm, direct crisis-response guide for rural India, working
+            |completely offline. The person just said something general, not a specific first-aid
+            |or disaster question — reply naturally and briefly, in plain language, the way a real
+            |person would. Do not invent a medical fact, dose, or disaster-response step; if they
+            |later ask something you don't actually have grounded guidance for, say so plainly
+            |instead of guessing.
+            |
+            |$historyBlock|New message: $query
+            |
+            |Answer:
+        """.trimMargin()
+    }
+
+    private fun buildGuidePrompt(query: String, context: String, historyBlock: String): String {
         return """
             |Instruction: You are a calm, direct crisis-response guide for rural India, working
             |completely offline. Answer the new question as a short practical guide, in your own

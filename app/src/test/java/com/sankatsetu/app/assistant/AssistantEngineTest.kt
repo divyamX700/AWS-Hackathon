@@ -64,13 +64,28 @@ class AssistantEngineTest {
     }
 
     @Test
-    fun `query with no matches returns the honest no-guidance fallback and no sources`() = runTest {
+    fun `query with no matches and no model returns the honest no-guidance fallback and no sources`() = runTest {
         val engine = AssistantEngine(chunks, llm = UnavailableLlmAssistant)
         val answer = engine.answer("what's the weather like on mars")
 
         assertFalse(answer.wasGenerated)
         assertTrue(answer.text.contains("112"))
         assertTrue(answer.sources.isEmpty())
+    }
+
+    @Test
+    fun `query with no KB match but a model available still gets a real generated answer`() = runTest {
+        // A real bug found by actually asking the app "hello": this used to
+        // return FALLBACK_NO_MATCH unconditionally, so the model never ran
+        // for anything outside the crisis knowledge base — plain
+        // conversation was impossible even with a model side-loaded. See
+        // AssistantEngine.answer's doc.
+        val engine = AssistantEngine(chunks, llm = FakeLlm(available = true, response = "Hello! How can I help?"))
+        val answer = engine.answer("hello")
+
+        assertTrue(answer.wasGenerated)
+        assertEquals("Hello! How can I help?", answer.text)
+        assertTrue(answer.sources.isEmpty()) // never implies this came from the knowledge base
     }
 
     @Test
@@ -137,18 +152,5 @@ class AssistantEngineTest {
 
         assertFalse(answer.text.contains("Action rule"))
         assertEquals(SuggestedAction.NONE, answer.suggestedAction) // the real Action: line, not the stray one
-    }
-
-    @Test
-    fun `draftShareableMessage returns null when no model is available`() = runTest {
-        val engine = AssistantEngine(chunks, llm = UnavailableLlmAssistant)
-        assertEquals(null, engine.draftShareableMessage("how do I stop bleeding", "Press hard on the wound."))
-    }
-
-    @Test
-    fun `draftShareableMessage returns the model's drafted text when available`() = runTest {
-        val engine = AssistantEngine(chunks, llm = FakeLlm(available = true, response = "I'm okay, treating a cut, will update you."))
-        val draft = engine.draftShareableMessage("how do I stop bleeding", "Press hard on the wound.")
-        assertEquals("I'm okay, treating a cut, will update you.", draft)
     }
 }

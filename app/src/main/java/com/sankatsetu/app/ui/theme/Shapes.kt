@@ -5,24 +5,21 @@ import androidx.compose.material3.Shapes
 import androidx.compose.ui.unit.dp
 
 /**
- * A graduated corner-radius scale, tighter than Material's stock defaults —
- * "precision instrument" density (per docs/adr/0018) rather than the
- * softer/rounder consumer-app look, reserving the largest radius for the
- * one primary CTA and full-screen sheets so it reads as deliberately
- * emphasized, not uniform. True continuous "squircle" corners (Apple's
- * actual corner curve) need a custom superellipse path or
- * `androidx.graphics:graphics-shapes`; skipped for this pass — a large,
- * consistent `RoundedCornerShape` reads as premium enough on its own and
- * carries far less risk this close to a submission deadline than a new
- * shape-morphing dependency.
+ * A ledger's rows are ruled rectangles, not floating rounded cards — this
+ * scale is deliberately tight, almost square, the opposite move from the
+ * prior "precision instrument" pass's already-tight-but-still-rounded
+ * cards (docs/adr/0018). Rounding survives only where Material's own
+ * platform conventions need it (dialogs, menus) or where a little softness
+ * reads as a deliberate seal/stamp shape rather than indecision. See
+ * docs/adr/0019-ledger-register-redesign.md.
  */
 val SankatSetuShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),   // chips, status pills, small badges
-    small = RoundedCornerShape(12.dp),       // buttons, compact controls
-    medium = RoundedCornerShape(16.dp),      // cards, list rows, message bubbles
-    large = RoundedCornerShape(22.dp),       // the primary CTA, highlighted cards
-    extraLarge = RoundedCornerShape(28.dp)   // sheets, dialogs, full-bleed panels
+    extraSmall = RoundedCornerShape(3.dp),   // status tags, small badges
+    small = RoundedCornerShape(5.dp),        // buttons, compact controls
+    medium = RoundedCornerShape(3.dp),       // ledger rows — almost square, ruled not rounded
+    large = RoundedCornerShape(6.dp),        // the primary "I'm Safe" stamped action, highlighted rows
+    extraLarge = RoundedCornerShape(16.dp)   // sheets, dialogs — Material platform convention, not the ledger's own vocabulary
 )
 
-/** Fully rounded — status pills, avatar-style glyphs. Not part of [Shapes] since Material doesn't have a "pill" slot. */
+/** Fully rounded — reserved for genuinely circular glyphs (StampMark). Not part of [Shapes] since Material doesn't have a "pill" slot; the ledger world itself has no pill-shaped chrome, unlike the prior pass. */
 val PillShape = RoundedCornerShape(percent = 50)
