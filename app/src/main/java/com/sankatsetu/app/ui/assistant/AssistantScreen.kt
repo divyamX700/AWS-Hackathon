@@ -1,7 +1,10 @@
 package com.sankatsetu.app.ui.assistant
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -16,9 +19,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -28,6 +31,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
@@ -45,12 +49,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.assistant.KnowledgeChunk
 import com.sankatsetu.app.assistant.SuggestedAction
+import com.sankatsetu.app.ui.theme.pressScale
+import com.sankatsetu.app.ui.theme.rememberShimmerProgress
 
 /** Which layer of the Docs browser is showing, if any — see [DocsBrowser]. Back (system or app bar) steps down one level instead of leaving the tab. */
 private sealed class DocsView {
@@ -88,14 +97,16 @@ fun AssistantScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Assistant") },
+                title = { Text("Assistant", style = MaterialTheme.typography.headlineSmall) },
                 actions = {
                     IconButton(onClick = { docsView = DocsView.List }) {
                         Icon(Icons.AutoMirrored.Filled.MenuBook, contentDescription = "Browse offline guides")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
     Column(Modifier.padding(padding).fillMaxSize()) {
         if (state.turns.isEmpty()) {
@@ -109,6 +120,13 @@ fun AssistantScreen(
                 verticalArrangement = Arrangement.Center,
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Icon(
+                    Icons.Filled.AutoAwesome,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(40.dp)
+                )
+                Spacer(Modifier.height(16.dp))
                 Text(
                     "Ask about first aid, evacuation, or what to do in an emergency — works completely offline.",
                     style = MaterialTheme.typography.bodyLarge,
@@ -118,8 +136,8 @@ fun AssistantScreen(
         } else {
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(12.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 items(state.turns, key = { it.id }) { turn ->
                     TurnCard(
@@ -136,13 +154,14 @@ fun AssistantScreen(
         }
 
         Row(
-            Modifier.fillMaxWidth().padding(12.dp),
+            Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
                 modifier = Modifier.weight(1f),
+                shape = MaterialTheme.shapes.extraLarge,
                 placeholder = { Text("Ask something…") },
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Send),
                 keyboardActions = androidx.compose.foundation.text.KeyboardActions(
@@ -156,6 +175,7 @@ fun AssistantScreen(
                 )
             )
             Spacer(Modifier.width(8.dp))
+            val sendInteraction = remember { MutableInteractionSource() }
             IconButton(
                 onClick = {
                     if (draft.isNotBlank()) {
@@ -164,9 +184,18 @@ fun AssistantScreen(
                     }
                     keyboardController?.hide()
                 },
-                enabled = draft.isNotBlank()
+                interactionSource = sendInteraction,
+                enabled = draft.isNotBlank(),
+                modifier = Modifier
+                    .pressScale(sendInteraction)
+                    .clip(MaterialTheme.shapes.extraLarge)
+                    .background(if (draft.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceContainerHigh)
             ) {
-                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Ask")
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Ask",
+                    tint = if (draft.isNotBlank()) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -191,30 +220,35 @@ private fun TurnCard(
     Column(Modifier.fillMaxWidth()) {
         // The question, right-aligned like an outgoing chat bubble.
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Text(turn.question, Modifier.padding(10.dp))
+            Card(
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) {
+                Text(
+                    turn.question,
+                    Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onPrimary
+                )
             }
         }
-        // height, not width — this is a vertical gap in a Column; the
-        // previous width-only Spacer had zero height and did nothing,
-        // leaving the question and answer bubbles visually touching.
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(10.dp))
         turn.answer?.let { answer ->
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
+            Card(
+                Modifier.fillMaxWidth(),
+                shape = MaterialTheme.shapes.medium,
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Column(Modifier.padding(14.dp)) {
                     Text(answer, style = MaterialTheme.typography.bodyLarge)
                     // Retrieved source passages (turn.sources) are what the
                     // answer is grounded in, but not shown here anymore —
-                    // the per-source "📖 doc — section" chip list read as
-                    // clutter at the end of every answer. The data is still
-                    // there on AssistantTurn if a future UI (e.g. a "why
-                    // this answer" expandable) wants it.
-                    //
-                    // Generated vs. excerpt is marked with a small leading
-                    // icon rather than a colored border-left — craft-floor
-                    // guidance bans that pattern as a decorative habit, and
-                    // an icon plus label reads clearly without it.
-                    Spacer(Modifier.height(6.dp))
+                    // the per-source chip list read as clutter at the end of
+                    // every answer. The data is still there on AssistantTurn
+                    // if a future UI (e.g. a "why this answer" expandable)
+                    // wants it.
+                    Spacer(Modifier.height(8.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             if (turn.wasGenerated) Icons.Filled.AutoAwesome else Icons.Filled.Description,
@@ -230,32 +264,35 @@ private fun TurnCard(
                     }
 
                     if (turn.wasGenerated && turn.suggestedAction != SuggestedAction.NONE) {
-                        Spacer(Modifier.height(8.dp))
+                        Spacer(Modifier.height(10.dp))
                         when (turn.suggestedAction) {
                             SuggestedAction.BROADCAST_SAFE -> AssistChip(
                                 onClick = onBroadcastSafe,
                                 label = { Text("Broadcast \"I'm safe\" now") },
-                                leadingIcon = { Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                leadingIcon = { Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                shape = MaterialTheme.shapes.small,
+                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
                             )
                             SuggestedAction.OPEN_PAY -> AssistChip(
                                 onClick = onOpenPay,
                                 label = { Text("Open Pay tab") },
-                                leadingIcon = { Icon(Icons.Filled.Payments, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                leadingIcon = { Icon(Icons.Filled.Payments, contentDescription = null, modifier = Modifier.size(18.dp)) },
+                                shape = MaterialTheme.shapes.small,
+                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
                             )
                             SuggestedAction.NONE -> Unit
                         }
                     }
 
                     if (turn.wasGenerated) {
-                        Spacer(Modifier.height(4.dp))
+                        Spacer(Modifier.height(6.dp))
                         when {
                             turn.draft != null -> DraftedMessageCard(draft = turn.draft, onCopy = { clipboard.setText(AnnotatedString(turn.draft)) })
                             turn.isDrafting -> Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(Modifier.size(14.dp).padding(end = 6.dp))
-                                Text("Drafting a message to share…", style = MaterialTheme.typography.labelSmall)
+                                ShimmerLine(modifier = Modifier.width(140.dp).height(14.dp))
                             }
                             else -> TextButton(onClick = onDraftRequest, contentPadding = PaddingValues(0.dp)) {
-                                Text("Draft a message to share")
+                                Text("Draft a message to share", style = MaterialTheme.typography.labelLarge)
                             }
                         }
                     }
@@ -268,22 +305,44 @@ private fun TurnCard(
 /** The agent's drafted message, with a one-tap copy — no auto-send; the person decides where it goes (paste into any Chat thread). */
 @Composable
 private fun DraftedMessageCard(draft: String, onCopy: () -> Unit) {
-    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
-        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(draft, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+    Card(
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+    ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(draft, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.onSecondaryContainer)
             IconButton(onClick = onCopy) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy message")
+                Icon(Icons.Filled.ContentCopy, contentDescription = "Copy message", tint = MaterialTheme.colorScheme.onSecondaryContainer)
             }
         }
     }
 }
 
+/** A moving shimmer bar — replaces the plain spinner+"Thinking…" row with something that reads as active work happening, not a stalled app. */
 @Composable
 private fun ThinkingIndicator() {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(Modifier.padding(end = 8.dp))
-        Text("Thinking…", style = MaterialTheme.typography.labelSmall)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        ShimmerLine(modifier = Modifier.fillMaxWidth().height(16.dp))
+        ShimmerLine(modifier = Modifier.fillMaxWidth(0.7f).height(16.dp))
     }
+}
+
+@Composable
+private fun ShimmerLine(modifier: Modifier = Modifier) {
+    val progress = rememberShimmerProgress()
+    val base = MaterialTheme.colorScheme.surfaceContainerHigh
+    val highlight = MaterialTheme.colorScheme.surfaceContainerHighest
+    Row(
+        modifier
+            .clip(MaterialTheme.shapes.extraSmall)
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(base, highlight, base),
+                    start = Offset(progress * 600f - 300f, 0f),
+                    end = Offset(progress * 600f, 0f)
+                )
+            )
+    ) {}
 }
 
 /**
@@ -316,14 +375,16 @@ private fun DocsBrowser(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(title) },
+                title = { Text(title, style = MaterialTheme.typography.titleLarge) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
-        }
+        },
+        containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         when (view) {
             is DocsView.Reading -> {
@@ -335,7 +396,7 @@ private fun DocsBrowser(
                 ) {
                     items(sections, key = { it.id }) { chunk ->
                         Column {
-                            Text(chunk.section, style = MaterialTheme.typography.titleLarge)
+                            Text(chunk.section, style = MaterialTheme.typography.headlineSmall)
                             Spacer(Modifier.height(6.dp))
                             Text(chunk.text, style = MaterialTheme.typography.bodyLarge)
                         }
@@ -346,17 +407,22 @@ private fun DocsBrowser(
                 LazyColumn(
                     Modifier.padding(padding).fillMaxSize(),
                     contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(titles) { source ->
                         val sectionCount = bySource[source]?.size ?: 0
+                        val interaction = remember { MutableInteractionSource() }
                         Card(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .clickable(onClick = { onOpen(source) })
+                                .pressScale(interaction)
+                                .clickable(interactionSource = interaction, indication = null, onClick = { onOpen(source) }),
+                            shape = MaterialTheme.shapes.medium,
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                         ) {
                             Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                                Text(source, style = MaterialTheme.typography.bodyLarge)
+                                Text(source, style = MaterialTheme.typography.titleMedium)
                                 Text(
                                     "$sectionCount ${if (sectionCount == 1) "section" else "sections"}",
                                     style = MaterialTheme.typography.labelSmall,

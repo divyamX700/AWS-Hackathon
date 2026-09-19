@@ -12,9 +12,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Payments
-import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -27,6 +28,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import com.sankatsetu.app.SankatSetuApplication
@@ -42,10 +44,18 @@ import com.sankatsetu.app.ui.pay.PayViewModel
 import com.sankatsetu.app.ui.theme.SankatSetuTheme
 
 // Real drawn icons, not emoji — see docs/adr/0013-operate-mode-color-and-icons.md.
+// Assistant used a "robot head" glyph (SmartToy) — the generic cartoon-bot
+// icon that reads as a placeholder "AI feature" sticker in a lot of apps,
+// not a considered design choice. A sparkle (AutoAwesome) is what Apple's
+// own AI-feature glyph actually looks like, and it's already the icon this
+// app uses everywhere else it marks on-device-generated content (see
+// AssistantScreen.kt's empty state and "Generated on-device" label) — this
+// makes the tab icon consistent with that, not a new symbol. See
+// docs/adr/0018-ui-revamp.md.
 private enum class Tab(val label: String, val icon: ImageVector) {
     CHAT("Chat", Icons.AutoMirrored.Filled.Chat),
     PAY("Pay", Icons.Filled.Payments),
-    ASSISTANT("Assistant", Icons.Filled.SmartToy)
+    ASSISTANT("Assistant", Icons.Filled.AutoAwesome)
 }
 
 /**
@@ -157,35 +167,47 @@ class MainActivity : ComponentActivity() {
 
                     Scaffold(
                         bottomBar = {
-                            NavigationBar {
-                                Tab.entries.forEach { tab ->
-                                    NavigationBarItem(
-                                        selected = currentTab == tab,
-                                        onClick = { currentTab = tab },
-                                        icon = { Icon(tab.icon, contentDescription = null) },
-                                        label = { Text(tab.label) }
-                                    )
-                                }
-                            }
-                        }
-                    ) { padding ->
-                        Surface(Modifier.padding(padding).fillMaxSize()) {
-                            when (currentTab) {
-                                Tab.CHAT -> {
-                                    val thread = openThreadPeerId?.let { id -> chatState.peers.find { it.peerIdBase64 == id } }
-                                    if (thread == null) {
-                                        ChatListScreen(viewModel = chatViewModel, onOpenThread = { openThreadPeerId = it.peerIdBase64 })
-                                    } else {
-                                        ChatThreadScreen(viewModel = chatViewModel, peer = thread, onBack = { openThreadPeerId = null })
+                            androidx.compose.foundation.layout.Column {
+                                androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                NavigationBar(
+                                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                                    tonalElevation = 0.dp
+                                ) {
+                                    Tab.entries.forEach { tab ->
+                                        NavigationBarItem(
+                                            selected = currentTab == tab,
+                                            onClick = { currentTab = tab },
+                                            icon = { Icon(tab.icon, contentDescription = null) },
+                                            label = { Text(tab.label, style = MaterialTheme.typography.labelMedium) },
+                                            colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
+                                                indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                                            )
+                                        )
                                     }
                                 }
-                                Tab.PAY -> PayScreen(viewModel = payViewModel)
-                                Tab.ASSISTANT -> AssistantScreen(
-                                    viewModel = assistantViewModel,
-                                    knowledgeBase = app.container.knowledgeBase,
-                                    onBroadcastSafe = { chatViewModel.broadcastImSafe() },
-                                    onOpenPay = { currentTab = Tab.PAY }
-                                )
+                            }
+                        },
+                        containerColor = MaterialTheme.colorScheme.background
+                    ) { padding ->
+                        Surface(Modifier.padding(padding).fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            androidx.compose.animation.Crossfade(targetState = currentTab, label = "tab") { tab ->
+                                when (tab) {
+                                    Tab.CHAT -> {
+                                        val thread = openThreadPeerId?.let { id -> chatState.peers.find { it.peerIdBase64 == id } }
+                                        if (thread == null) {
+                                            ChatListScreen(viewModel = chatViewModel, onOpenThread = { openThreadPeerId = it.peerIdBase64 })
+                                        } else {
+                                            ChatThreadScreen(viewModel = chatViewModel, peer = thread, onBack = { openThreadPeerId = null })
+                                        }
+                                    }
+                                    Tab.PAY -> PayScreen(viewModel = payViewModel)
+                                    Tab.ASSISTANT -> AssistantScreen(
+                                        viewModel = assistantViewModel,
+                                        knowledgeBase = app.container.knowledgeBase,
+                                        onBroadcastSafe = { chatViewModel.broadcastImSafe() },
+                                        onOpenPay = { currentTab = Tab.PAY }
+                                    )
+                                }
                             }
                         }
                     }

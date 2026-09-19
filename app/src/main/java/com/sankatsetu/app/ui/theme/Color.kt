@@ -4,36 +4,65 @@ import androidx.compose.ui.graphics.Color
 
 /**
  * Single source of truth for every color in the app — no inline Color(0x…)
- * anywhere else, matching Flowpay's own CI-enforced rule (see docs/adr/0002).
- * We don't have their CI gate wired up yet (Day 4 polish item), so this is
- * enforced by convention only for now.
+ * anywhere else (Flowpay's own CI-enforced rule, see docs/adr/0002;
+ * enforced by convention only, no CI gate wired up yet).
  *
- * The four Imd* colors are India's own four-stage disaster/weather alert
- * scale — Green / Yellow / Orange / Red — published by the India
- * Meteorological Department on every monsoon and cyclone warning, and the
- * language every target user already reads correctly from TV and SMS
- * alerts. See docs/adr/0014-field-radio-design-language.md: this app's
- * status system reuses that scale instead of an invented palette, and
- * keeps each color's real meaning — Red stays reserved for genuine danger,
- * never decoration (docs/adr/0013 already established this; this pass
- * grounds it in a real external standard rather than an internal rule).
+ * Design direction (2026 UI revamp, see docs/adr/0018-ui-revamp.md):
+ * a restrained, mostly-monochrome instrument palette — near-black/near-white
+ * surfaces carrying almost all of the UI — with exactly one accent (signal
+ * blue, the app's own "trust" color) and three status colors reserved
+ * strictly for real state, never decoration. This replaces the prior IMD
+ * four-color scheme (docs/adr/0014) as the *primary* palette, but keeps its
+ * semantics — real severity, colorblind-legible via icon+text pairing, not
+ * color alone — since that research was sound; what changed is execution,
+ * not the underlying idea of "borrow India's own trusted alert language."
+ * Red stays reserved for genuine danger. Never used decoratively.
  */
 object SankatSetuColors {
-    val ImdGreen = Color(0xFF1E8E3E)   // "no warning" — ready, safe, delivered
-    val ImdYellow = Color(0xFFF2B705)  // "be aware" — connecting, handshake pending, watch
-    val ImdOrange = Color(0xFFE8710A)  // "be prepared" — pending/unsettled, caution
-    val ImdRed = Color(0xFFC62828)     // "take action" — genuine danger only: MaterialTheme.colorScheme.error
+    // --- The one accent: signal blue. Used for the primary interactive
+    // color, focus states, and the mesh's own "in range and ready" glow —
+    // never for status (status has its own three colors below), so a
+    // person never has to wonder "is blue good or bad here."
+    val SignalBlue = Color(0xFF3D8BFF)
+    val SignalBlueDark = Color(0xFF6BA6FF) // lighter on dark surfaces for AA contrast
 
-    // Instrument-panel neutral for the "console" register (peer IDs, hop
-    // counts, signal readouts) — a dim slate, not a bright accent, so the
-    // Imd* colors keep sole ownership of "something needs attention."
-    val ConsoleSlate = Color(0xFF3A4552)
-    val ConsoleSlateDark = Color(0xFFB8C2CC)
+    // --- Status: exactly three meanings, each colorblind-legible via a
+    // paired icon/glyph + word, never color alone (see ConsoleReadoutStyle
+    // usage sites). Kept conceptually anchored to the IMD scale's severity
+    // ladder but re-tuned to sit correctly against the new dark-first
+    // neutral stack instead of the old light-first Material baseline.
+    val StatusSafe = Color(0xFF30D07C)      // delivered, ready, settled, all-clear
+    val StatusCaution = Color(0xFFF5A623)   // connecting, pending, handle-soon
+    val StatusCritical = Color(0xFFFF5449)  // genuine danger only — never decorative
 
-    val NeutralInk = Color(0xFF1B1B1F)
-    val NeutralSurface = Color(0xFFFFFBFE)
-    val NeutralSurfaceDark = Color(0xFF121212)
-    val OfflineGray = Color(0xFF9E9E9E)   // peer link currently down — neutral, not alarming; see product principle in PRODUCT.md
-    val ReadBlue = Color(0xFF34B7F1)      // WhatsApp-style read-receipt tick — a convention users already read correctly, kept as-is
-    val HopBadgeBackground = Color(0xFFE0E0E0) // neutral chip background, not a status color
+    // --- Neutral surface stack (dark-first — see Theme.kt for why dark is
+    // the primary design target while light stays fully supported).
+    // Named by elevation, not by literal shade, so component code reads as
+    // "how far off the base is this" rather than a color guess.
+    val SurfaceBase = Color(0xFF0B0C0E)         // window background
+    val SurfaceRaised = Color(0xFF141519)       // cards, list rows
+    val SurfaceOverlay = Color(0xFF1D1F24)      // sheets, dialogs, the raised nav bar
+    val SurfaceOverlayHigh = Color(0xFF26282E)  // popovers, menus — one step above overlay
+    val HairlineOnDark = Color(0x1FFFFFFF)      // 12% white — card borders, dividers
+
+    val InkOnDark = Color(0xFFF2F3F5)           // primary text on dark surfaces
+    val InkMutedOnDark = Color(0xFFA0A4AC)      // secondary text / captions on dark
+
+    // --- Light theme mirror — same semantics, inverted stack.
+    val SurfaceBaseLight = Color(0xFFF7F7F8)
+    val SurfaceRaisedLight = Color(0xFFFFFFFF)
+    val SurfaceOverlayLight = Color(0xFFFFFFFF)
+    val SurfaceOverlayHighLight = Color(0xFFEFF0F2)
+    val HairlineOnLight = Color(0x14000000)     // 8% black
+
+    val InkOnLight = Color(0xFF16171A)
+    val InkMutedOnLight = Color(0xFF6B6F76)
+
+    // --- Legacy references still used by a few call sites during the
+    // revamp — kept narrowly scoped, not part of the new palette's public
+    // vocabulary. OfflineGray/ReadBlue are conventions users already read
+    // correctly (a dead link isn't alarming; a blue tick means "seen" the
+    // way it does in every chat app) so they survive unchanged.
+    val OfflineGray = Color(0xFF6B7280)
+    val ReadBlue = Color(0xFF3D8BFF)
 }

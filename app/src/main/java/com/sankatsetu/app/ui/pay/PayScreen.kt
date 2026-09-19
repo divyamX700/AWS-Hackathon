@@ -1,9 +1,9 @@
 package com.sankatsetu.app.ui.pay
 
-import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -28,6 +28,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -40,8 +41,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.data.IouEntity
 import com.sankatsetu.app.payments.UssdDialer
-import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
+import com.sankatsetu.app.ui.components.StatusPill
 import com.sankatsetu.app.ui.theme.SankatSetuColors
+import com.sankatsetu.app.ui.theme.pressScale
 
 /**
  * The Pay tab (docs/PRD.md §F3/F4): two cards that open the system dialer
@@ -56,7 +58,15 @@ fun PayScreen(viewModel: PayViewModel) {
     val context = LocalContext.current
     var showComposer by remember { mutableStateOf(false) }
 
-    Scaffold(topBar = { TopAppBar(title = { Text("Pay") }) }) { padding ->
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Pay", style = MaterialTheme.typography.headlineSmall) },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
+            )
+        },
+        containerColor = MaterialTheme.colorScheme.background
+    ) { padding ->
     LazyColumn(
         Modifier.fillMaxWidth().padding(padding),
         contentPadding = PaddingValues(16.dp),
@@ -65,7 +75,7 @@ fun PayScreen(viewModel: PayViewModel) {
         item {
             Text(
                 "Works with no internet — USSD and IVR use your SIM's voice/USSD channel, and mesh IOUs travel over Bluetooth.",
-                style = MaterialTheme.typography.labelSmall,
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -139,23 +149,36 @@ fun PayScreen(viewModel: PayViewModel) {
 
 @Composable
 private fun CompactActionButton(title: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = modifier) {
-        Text(title)
+    val interaction = remember { MutableInteractionSource() }
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.height(48.dp).pressScale(interaction),
+        interactionSource = interaction,
+        shape = MaterialTheme.shapes.small
+    ) {
+        Text(title, style = MaterialTheme.typography.titleSmall)
     }
 }
 
 @Composable
 private fun PayActionCard(title: String, subtitle: String, onClick: () -> Unit, highlighted: Boolean = false) {
+    val interaction = remember { MutableInteractionSource() }
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        modifier = Modifier.fillMaxWidth().pressScale(interaction).clickable(interactionSource = interaction, indication = null, onClick = onClick),
+        shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(
-            containerColor = if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-        )
+            containerColor = if (highlighted) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainer
+        ),
+        border = if (highlighted) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
+        Column(Modifier.padding(18.dp)) {
+            Text(title, style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
-            Text(subtitle, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (highlighted) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -171,9 +194,9 @@ private fun IouComposer(
     var amountRupees by remember { mutableStateOf("") }
     var memo by remember { mutableStateOf("") }
 
-    Card(Modifier.fillMaxWidth()) {
+    Card(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("New mesh IOU", style = MaterialTheme.typography.bodyLarge)
+            Text("New mesh IOU", style = MaterialTheme.typography.titleLarge)
 
             if (peers.isEmpty()) {
                 Text(
@@ -216,6 +239,7 @@ private fun IouComposer(
             )
 
             val amountPaise = amountRupees.toDoubleOrNull()?.let { (it * 100).toLong() }
+            val sendInteraction = remember { MutableInteractionSource() }
             Button(
                 onClick = {
                     val peer = selected ?: return@Button
@@ -223,9 +247,11 @@ private fun IouComposer(
                     onSend(peer.peerIdBase64, peer.nickname, paise, memo.trim())
                 },
                 enabled = selected != null && amountPaise != null && amountPaise > 0,
-                modifier = Modifier.fillMaxWidth()
+                interactionSource = sendInteraction,
+                shape = MaterialTheme.shapes.medium,
+                modifier = Modifier.fillMaxWidth().height(48.dp).pressScale(sendInteraction)
             ) {
-                Text("Send IOU")
+                Text("Send IOU", style = MaterialTheme.typography.titleSmall)
             }
         }
     }
@@ -233,7 +259,7 @@ private fun IouComposer(
 
 @Composable
 private fun IouSectionHeader(title: String) {
-    Text(title, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(top = 8.dp))
+    Text(title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
 }
 
 @Composable
@@ -242,31 +268,37 @@ private fun EmptySectionText(text: String) {
 }
 
 /**
- * Status reads as one monospace readout, colored by the same IMD scale as
- * the Chat tab's signal bars — a settled IOU and a ready peer share the
- * same green because both mean "no action needed," a pending IOU shares
- * caution-orange with anything else in the app that means "handle this
+ * Status reads as one status-pill vocabulary shared with the Chat tab's
+ * peer rows — a settled IOU and a ready peer share the same "safe" green
+ * because both mean "no action needed," a pending IOU shares
+ * caution-amber with anything else in the app that means "handle this
  * soon." One vocabulary, not a per-screen palette. See
- * docs/adr/0014-field-radio-design-language.md.
+ * docs/adr/0018-ui-revamp.md.
  */
 @Composable
 private fun IouCard(iou: IouEntity, onMarkSettled: (() -> Unit)? = null) {
     val (tint, statusWord) = when (iou.status) {
-        "settled" -> SankatSetuColors.ImdGreen to "SETTLED"
-        "rejected" -> SankatSetuColors.ImdRed to "REJECTED"
-        else -> SankatSetuColors.ImdOrange to "PENDING"
+        "settled" -> SankatSetuColors.StatusSafe to "SETTLED"
+        "rejected" -> SankatSetuColors.StatusCritical to "REJECTED"
+        else -> SankatSetuColors.StatusCaution to "PENDING"
     }
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
         Row(Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("₹${"%.2f".format(iou.amountPaise / 100.0)} — ${iou.counterpartyNickname}", style = MaterialTheme.typography.bodyLarge)
+                Text("₹${"%.2f".format(iou.amountPaise / 100.0)} — ${iou.counterpartyNickname}", style = MaterialTheme.typography.titleMedium)
                 if (iou.memo.isNotBlank()) {
-                    Text(iou.memo, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(iou.memo, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Text(statusWord, style = ConsoleReadoutStyle, color = tint, modifier = Modifier.padding(top = 2.dp))
+                Spacer(Modifier.height(4.dp))
+                StatusPill(statusWord, tint)
             }
             if (onMarkSettled != null && iou.status == "pending") {
-                OutlinedButton(onClick = onMarkSettled) { Text("Mark paid") }
+                OutlinedButton(onClick = onMarkSettled, shape = MaterialTheme.shapes.small) { Text("Mark paid") }
             }
         }
     }

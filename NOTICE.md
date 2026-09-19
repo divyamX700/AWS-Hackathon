@@ -94,3 +94,12 @@ readouts; see `docs/adr/0014-field-radio-design-language.md`).
 
 Source: https://github.com/JetBrains/JetBrainsMono
 License: SIL Open Font License 1.1
+
+## Inter
+
+`res/font/inter_variable.ttf` — the primary UI typeface (body text,
+headings, buttons) as of the 2026 UI revamp; see
+`docs/adr/0018-ui-revamp.md`.
+
+Source: https://github.com/rsms/inter (bundled from https://github.com/google/fonts/tree/main/ofl/inter)
+License: SIL Open Font License 1.1
