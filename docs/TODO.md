@@ -7,6 +7,13 @@ come back to this" pile. Remove an item once it's actually decided/built
 
 ## Open
 
+- **On-device LLM grounding regression — see `docs/adr/0021-llm-grounding-regression.md`.**
+  Not resolved: three different real questions got the same generic
+  wound-cleaning answer even after a real, confirmed prompt-overflow bug was
+  fixed. A `matches.take(1)` mitigation shipped but was never re-verified on
+  a device (it disconnected mid-session). Re-run the three questions in that
+  ADR on real hardware before treating this as closed.
+
 - **Online fallback from the on-device LLM to a bigger, Strands-powered
   model.** Idea: the phone always uses the small on-device Qwen2.5-0.5B
   (MediaPipe) when offline, same as today, but if the phone *does* have

@@ -33,6 +33,17 @@ class AssistantEngineTest {
         }
     }
 
+    /** Records the exact prompt it was asked to generate from — for asserting what actually reaches the model. */
+    private class CapturingFakeLlm(private val response: String?) : LlmAssistant {
+        override val isAvailable: Boolean = true
+        var lastPrompt: String? = null
+            private set
+        override suspend fun generate(prompt: String): String? {
+            lastPrompt = prompt
+            return response
+        }
+    }
+
     @Test
     fun `no model available falls back to the extractive top match`() = runTest {
         val engine = AssistantEngine(chunks, llm = UnavailableLlmAssistant)
@@ -152,5 +163,29 @@ class AssistantEngineTest {
 
         assertFalse(answer.text.contains("Action rule"))
         assertEquals(SuggestedAction.NONE, answer.suggestedAction) // the real Action: line, not the stray one
+    }
+
+    @Test
+    fun `a long retrieved chunk is truncated before it reaches the prompt`() = runTest {
+        // Real-device bug: after the knowledge base's content-expansion pass
+        // roughly doubled section length, a 3-passage context block plus the
+        // instruction preamble routinely built prompts past the model's
+        // 1280-token KV cache BEFORE any output token — verified live by
+        // asking three unrelated real questions (a bandage, a tourniquet,
+        // CPR) and getting the identical generic wound-cleaning answer for
+        // all three, despite KnowledgeRetriever correctly ranking a
+        // different, on-topic passage first every time. See
+        // AssistantEngine.truncatedForPrompt's doc for the full diagnosis.
+        val longText = "First sentence of a very long passage. " + "Padding sentence to inflate the section length. ".repeat(30)
+        val longChunks = listOf(KnowledgeChunk(id = "long", source = "Test Source", section = "Long Passage Section", text = longText))
+        val fakeLlm = CapturingFakeLlm("1. Do the thing.")
+        val engine = AssistantEngine(longChunks, llm = fakeLlm)
+
+        engine.answer("tell me about the long passage section")
+
+        val prompt = fakeLlm.lastPrompt
+        assertTrue(prompt != null)
+        assertTrue(prompt!!.contains("First sentence of a very long passage.")) // the start of the passage still comes through
+        assertFalse(prompt.contains(longText)) // but not the whole 1500+ character passage verbatim
     }
 }

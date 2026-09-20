@@ -1,7 +1,12 @@
 package com.sankatsetu.app.assistant
 
-/** One source passage the answer is grounded in, for the UI's source card (PRD §11.2's Assistant screen). */
-data class AssistantSource(val source: String, val section: String, val text: String)
+/**
+ * One source passage the answer is grounded in, for the UI's source card
+ * (PRD §11.2's Assistant screen). [image] is carried straight from the
+ * matched [KnowledgeChunk] — never chosen here, never touched by the LLM.
+ * See [KnowledgeBaseLoader] for how a chunk gets an image in the first place.
+ */
+data class AssistantSource(val source: String, val section: String, val text: String, val image: KnowledgeImage? = null)
 
 /** One prior question+answer, for multi-turn context — see [AssistantEngine.answer]. */
 data class AssistantExchange(val question: String, val answer: String)
@@ -52,6 +57,40 @@ private val STRAY_ACTION_RULE_LINE = Regex("(?m)^Action rule:.*$\\n?")
 private fun String.normalizeLiteralNewlines(): String = replace("\\n", "\n")
 
 /**
+ * Caps how much of a single retrieved chunk's text enters the LLM prompt's
+ * context block. A real-device test asking three unrelated questions (a
+ * bandage, a tourniquet, and CPR) got the SAME generic wound-cleaning answer
+ * for all three, despite [KnowledgeRetriever] correctly ranking a different,
+ * on-topic passage first each time (verified directly against the retriever,
+ * not assumed) — the model was ignoring correct context, not being given
+ * wrong context. Root cause: knowledge-base sections roughly doubled in
+ * length in a later content pass (public-health-sourced detail per section,
+ * each with an inline citation), so a 3-passage context block plus the
+ * instruction preamble routinely built prompts past 5000 characters
+ * (~1300+ tokens) — over the `.task` bundle's 1280-token KV cache
+ * (see [MediaPipeLlmAssistant]'s `setMaxTokens(1200)` comment) BEFORE any
+ * output token is generated. [MediaPipeLlmAssistant] has no way to safely
+ * raise that ceiling (it's fixed by how the model file itself was
+ * converted), so the fix has to shrink what goes in, not raise what fits.
+ * Cutting at the last sentence boundary before the cap (falling back to a
+ * hard cut only if no sentence boundary exists) keeps the truncated text
+ * grammatical instead of trailing off mid-word. This only affects what the
+ * model reads to draft its own answer — [AssistantSource.text] (the
+ * "why this answer" data and the Docs browser's full-text reading view)
+ * still carries the complete, untruncated section. See
+ * docs/adr/0020-image-grounded-answers.md's "Consequences" for how this was
+ * found during the same testing pass that verified the image feature.
+ */
+private const val MAX_CONTEXT_CHARS_PER_CHUNK = 500
+
+private fun String.truncatedForPrompt(): String {
+    if (length <= MAX_CONTEXT_CHARS_PER_CHUNK) return this
+    val window = substring(0, MAX_CONTEXT_CHARS_PER_CHUNK)
+    val cut = window.lastIndexOfAny(charArrayOf('.', '!', '?'))
+    return if (cut >= MAX_CONTEXT_CHARS_PER_CHUNK / 2) window.substring(0, cut + 1) else "$window…"
+}
+
+/**
  * Retrieval-augmented, single-call agent: one on-device generation does
  * triage (is a real app action warranted), grounding (the existing
  * [KnowledgeRetriever] search), and drafting (the structured guide itself)
@@ -94,10 +133,26 @@ class AssistantEngine(
             return AssistantAnswer(FALLBACK_NO_MATCH, emptyList(), wasGenerated = false)
         }
 
-        val sources = matches.map { AssistantSource(it.chunk.source, it.chunk.section, it.chunk.text) }
+        val sources = matches.map { AssistantSource(it.chunk.source, it.chunk.section, it.chunk.text, it.chunk.image) }
 
         if (llm.isAvailable) {
-            val prompt = buildPrompt(query, matches.map { it.chunk }, history)
+            // Only the single best-ranked chunk is fed to the model — NOT
+            // all of `matches` (topK=3), even though `sources` above
+            // intentionally keeps all 3 for the UI's citations/image. A
+            // real-device regression this session: three unrelated
+            // questions (a bandage, a tourniquet, CPR) kept getting the
+            // same generic wound-cleaning answer even after fixing a real
+            // prompt-overflow bug (see MAX_CONTEXT_CHARS_PER_CHUNK's doc)
+            // that made the prompt fit comfortably in-budget again. That
+            // means a 3-passage context block gives this ~0.5B model room
+            // to drift toward a memorized-sounding generic answer instead
+            // of the specific top-ranked passage, even when that passage is
+            // both correct (verified directly against KnowledgeRetriever)
+            // and well within the token budget on its own. Restricting to
+            // one passage is a reasonable next lever given the evidence,
+            // NOT a confirmed fix — there was no device left to re-test
+            // this change live. See docs/adr/0021-llm-grounding-regression.md.
+            val prompt = buildPrompt(query, matches.take(1).map { it.chunk }, history)
             // A real-device test tried an outer retry here for a missing
             // Action line, and found a worse bug: MediaPipeLlmAssistant's
             // own generate() is ALREADY a length-gated retry loop (see its
@@ -156,7 +211,7 @@ class AssistantEngine(
      */
     private fun buildPrompt(query: String, chunks: List<KnowledgeChunk>, history: List<AssistantExchange>): String {
         val context = chunks.withIndex().joinToString("\n\n") { (i, chunk) ->
-            "[${i + 1}] ${chunk.text}\n    Source: ${chunk.source}, section ${chunk.section}"
+            "[${i + 1}] ${chunk.text.truncatedForPrompt()}\n    Source: ${chunk.source}, section ${chunk.section}"
         }
         val historyBlock = if (history.isEmpty()) {
             ""
