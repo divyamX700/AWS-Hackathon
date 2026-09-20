@@ -4,6 +4,8 @@ import android.util.Base64
 import com.sankatsetu.app.data.PeerDao
 import com.sankatsetu.app.data.SosDao
 import com.sankatsetu.app.data.SosEntity
+import com.sankatsetu.app.maps.LocationProvider
+import com.sankatsetu.app.maps.LocationResult
 import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.protocol.MeshPacket
 import com.sankatsetu.app.mesh.protocol.MessageType
@@ -37,6 +39,7 @@ class SosManager(
     private val router: MessageRouter,
     private val peerDao: PeerDao,
     private val sosDao: SosDao,
+    private val locationProvider: LocationProvider,
     scope: CoroutineScope
 ) {
     fun observeAll(): Flow<List<SosEntity>> = sosDao.observeAll()
@@ -50,9 +53,18 @@ class SosManager(
      * report — the mesh never echoes our own origin packet back to us (see
      * [MessageRouter.broadcast]'s `seenCache.markIfNew` call), so without
      * this the sender's own log would never show what they just sent.
+     *
+     * Waits up to [LOCATION_TIMEOUT_MS] for a location fix before sending —
+     * deliberately short, not [LocationProvider]'s own 30s default: this is
+     * a one-handed emergency action (see docs/PRODUCT.md's Product
+     * Principle 2), and blocking it on a slow or unavailable GPS fix would
+     * be worse than sending without coordinates. A cached recent fix (e.g.
+     * from already having opened the Map tab) still resolves near-instantly
+     * either way. See docs/adr/0021-sos-location.md.
      */
     suspend fun broadcastSos(category: SosCategory): String? {
-        val packet = SosPacket(category = category)
+        val fix = locationProvider.getCurrentFix(timeoutMs = LOCATION_TIMEOUT_MS) as? LocationResult.Fix
+        val packet = SosPacket(category = category, latitude = fix?.latitude, longitude = fix?.longitude)
         val encoded = packet.encode() ?: return null
         router.broadcast(MessageType.SOS_BROADCAST, encoded, sign = false, padded = false)
 
@@ -65,7 +77,9 @@ class SosManager(
                 hopCount = 0,
                 receivedAt = packet.createdAt,
                 acknowledged = true, // nothing to acknowledge about your own report
-                isOutgoing = true
+                isOutgoing = true,
+                latitude = packet.latitude,
+                longitude = packet.longitude
             )
         )
         return packet.sosId
@@ -97,8 +111,14 @@ class SosManager(
                 hopCount = MeshPacket.DEFAULT_TTL - packet.ttl,
                 receivedAt = System.currentTimeMillis(),
                 acknowledged = false,
-                isOutgoing = false
+                isOutgoing = false,
+                latitude = sos.latitude,
+                longitude = sos.longitude
             )
         )
+    }
+
+    companion object {
+        private const val LOCATION_TIMEOUT_MS = 5_000L
     }
 }

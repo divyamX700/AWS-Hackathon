@@ -52,6 +52,13 @@ original PRD's coordinator concept) — every feature runs standalone on
 the phone. The three offline pillars above are the core; the mesh IOU is
 real but secondary, never given equal billing with actual UPI payment.
 
+**A 4th, deliberately separate section was added 2026-09-20**: offline
+maps. Unlike the three pillars, it's not a zero-internet feature — it
+needs a real internet connection once, in advance, to download a 2km
+radius around the person, framed explicitly as preventive (before a trip
+to a remote or high-risk area, not reached for during a crisis, since
+there's no internet during one to download anything with). See §9.
+
 ## 2. Architecture
 
 ```
@@ -99,7 +106,7 @@ gateway/              Strands Agents SDK + Ollama reference agent (Python,
                        standalone, a laptop CLI tool — not part of the
                        Android app, no code path connects them). See §5's
                        AWS section and gateway/README.md.
-scripts/              Setup scripts for a new machine, see §9.
+scripts/              Setup scripts for a new machine, see §11.
 docs/
   PRD.md, PLAN.md     Original product spec and day-by-day build plan —
                        historical, several features scoped there were
@@ -260,7 +267,7 @@ latency regressions (prompt bloat pushing the model toward its own
 documented worst-case rambling/retry behavior).
 
 If no model is side-loaded at all (the common case on a fresh clone — see
-§9), the extractive fallback returns the best-matched passage verbatim,
+§11), the extractive fallback returns the best-matched passage verbatim,
 never fabricated, and the UI marks this state visibly.
 
 **Model**: `Qwen2.5-0.5B-Instruct`, int8, MediaPipe LLM Inference API
@@ -275,7 +282,7 @@ markers made this specific quantized conversion emit zero tokens — a
 plain unstructured prompt works, ChatML markers don't).
 
 The model file (~521MB) is **not committed to git** (`docs/adr/0005`,
-GitHub's 100MB limit) — side-loaded via `adb push`, see §9.
+GitHub's 100MB limit) — side-loaded via `adb push`, see §11.
 
 The on-device agent used to have a third stage (an on-request
 message-drafting call, turning a Q&A into a short shareable summary).
@@ -370,8 +377,19 @@ register (hop counts, timestamps, amounts) — never body prose.
   bank/SIM, with the PIN/balance-only issue above still open.
 - **SOS broadcast**: send path and local log verified on real hardware
   (see §8) — same single-device limitation as the rest of the mesh for
-  an actual received alert.
-- Full unit test suite: **68/68 passing** as of this handoff
+  an actual received alert, though the *decode → store → render* half of
+  that path is verified via `SosSimulator` (§10), just not the real BLE
+  transport underneath it.
+- **Offline maps**: full cold-cache download verified on real hardware —
+  real GPS fix, real MapTiler tiles, then confirmed genuinely usable with
+  Wi-Fi and mobile data both disabled (panning inside the downloaded area
+  works, panning outside it correctly shows nothing cached). See §9.
+- **SOS location + 1-hop peer location on the map**: real GPS coordinates
+  now travel with an SOS broadcast and with a peer's announce (when a
+  fix is cached), rendered as standardized pins on the Map screen. See
+  §10 for the two ADRs, the real bugs found, and what's still simulated
+  vs. field-verified.
+- Full unit test suite: **72/72 passing** as of this handoff
   (`./gradlew testDebugUnitTest`).
 
 ## 4. AWS Build It integration status
@@ -382,7 +400,7 @@ mandatory to win a prize"* — one tool, not all eight.
 
 | Tool | Status | Detail |
 |---|---|---|
-| **Corretto** | 🟢 Verified | Amazon Corretto 11 is the actual JDK building this app. Pinned via machine-local `~/.gradle/gradle.properties`, not the repo — see §9's setup notes, including a real gotcha about the Gradle launcher process needing `JAVA_HOME` itself set, not just the daemon property. |
+| **Corretto** | 🟢 Verified | Amazon Corretto 11 is the actual JDK building this app. Pinned via machine-local `~/.gradle/gradle.properties`, not the repo — see §11's setup notes, including a real gotcha about the Gradle launcher process needing `JAVA_HOME` itself set, not just the daemon property. |
 | **Cedar** | 🟢 Verified, real hardware | See §2's Cedar section above. |
 | **Strands Agents SDK** | 🟢 Verified, but see the caveat below | `gateway/agent/` — a real `strands.Agent` + `OllamaModel`, fully offline, mirroring (mostly — see below) the Kotlin engine's pipeline. This is a **standalone Python CLI script on a laptop**, not part of the Android app, and there is no code path — none, under any connectivity condition — from the phone app to it. A user of the actual app can never reach it. It exists purely to demonstrate genuine Strands SDK usage for judging. **Caveat**: it still has all 3 original agent stages (including message-drafting), while the Kotlin app dropped its drafting stage this session — they are no longer a matched pair. Worth a decision before finalizing any submission material that claims parity. |
 | **PartyRock** | 🔴 Not done | Needs the user's own 10 minutes in a browser at partyrock.aws — no code work possible on this end. |
@@ -396,6 +414,17 @@ no-central-coordinator constraint, most of the remaining tools (SAM CLI,
 LocalStack, OpenSearch as a server) don't have a natural place to live —
 they're server/backend tools for an app with no backend. Treat the AWS
 requirement as closed unless there's a specific reason to add a 4th.
+
+**Explicitly considered and declined for the offline-maps feature
+(2026-09-20)**: SAM CLI + LocalStack for a demonstration Lambda/S3
+"map-extraction service" pipeline. Correctly rejected once the user
+clarified the actual constraint: SAM CLI/LocalStack is inherently a
+laptop-side dev-time tool (Docker containers emulating AWS), so using it
+at all means a second component existing outside the phone app — exactly
+the "separate laptop/coordinator" pattern the user had just said they
+didn't want repeated (see the Strands `gateway/` caveat above). No AWS
+tool touches the maps feature; it doesn't need one, and 3/8 already
+satisfies the rule.
 
 ## 5. Known problems and open questions
 
@@ -411,12 +440,6 @@ requirement as closed unless there's a specific reason to add a 4th.
 - **LLM occasionally hallucinates a fact unrelated to the question**
   (a documented example: a snake-bite query once generated an incorrect
   claim about rabies transmission). Not fixed.
-- **No dedicated SOS/emergency broadcast exists.** Real protocol
-  groundwork is already sitting unused: `MessageType.SOS_BROADCAST`
-  (`0x40`) is a reserved wire byte, and Cedar's policy already has a
-  tighter-capped `"sos"` resource kind — but no packet payload format or
-  UI was ever built. Real ideation is parked in `docs/TODO.md`, not yet
-  decided or built. See §8.
 - **`gateway/`'s Python dependencies are in the system Python, not a
   venv** — works, but a fresh machine should use
   `python -m venv gateway/.venv` from the start.
@@ -424,6 +447,18 @@ requirement as closed unless there's a specific reason to add a 4th.
   unexplained, harmless.
 - **Light theme, TalkBack, and 200% font scale** are not verified against
   the current (or any prior) build on real hardware.
+- **Offline maps only cache one area at a time** — re-downloading
+  overwrites the previous record (`MapAreaStore` holds a single entry).
+  A tourist visiting several high-risk stops on one trip needs to
+  re-download at each one, not a running multi-area cache. See §9.
+- **No live "you are here" tracking on the map** — SOS/peer/download pins
+  are all last-known-position snapshots, never continuously updated. See
+  §10.
+- **A second real data-wipe mistake happened this session**: `adb pm
+  clear` was used mid-session to force a clean cold-cache test for the
+  maps feature, wiping the same kind of real test-phone data the earlier
+  `adb uninstall` incident (§7) already flagged as something to never
+  repeat. Recorded here plainly rather than only in chat history.
 
 ## 6. Immediate next steps, in priority order
 
@@ -442,7 +477,11 @@ requirement as closed unless there's a specific reason to add a 4th.
 6. Consider the LLM hallucination issue if time allows.
 7. Consider an `SOS_ACK` reply type and a local SOS send-rate limit if
    time allows (§8).
-8. OpenSearch remains the most tractable *additional* AWS tool if ever
+8. **Design and build the SOS/offline-maps integration** the user has
+   already signaled intent for (a real location attached to an SOS report,
+   now that real location exists) — a genuine design conversation of its
+   own, not started yet. See §9.
+9. OpenSearch remains the most tractable *additional* AWS tool if ever
    wanted, though not required.
 
 ## 7. Session log
@@ -514,6 +553,45 @@ everything described above.
   thread was inserted directly via the real DAOs to show the user how an
   out-of-range-but-previously-met peer renders, then removed with
   `PeerDao.delete` + `MessageDao.deleteThread` — no data lost that time.
+- **Replaced SOS's full-screen blocking interrupt dialog** with a
+  non-blocking pulsing log-row animation plus a small "SOS" nav-icon tag,
+  after direct user feedback that a modal interrupt was too disruptive.
+  Found and fixed a real bug in the same pass: the "already animated"
+  flag lived in per-row Compose `remember` state, which reset every time
+  a row scrolled out of the lazy list's window and back in, replaying the
+  pulse — moved to a plain `Set` on `SosViewModel`, which outlives any
+  single row's composition.
+- **Built the offline-maps feature end to end** (a new, 4th section — see
+  §9 for the full detail). Real bugs found and fixed by actually testing
+  on-device, not by inspection: the public OSM tile server's own
+  `TileSourcePolicyException` on bulk download (led to sourcing a real
+  MapTiler API key instead of routing around the policy), a `CacheManager`
+  built from the visible `MapView` visibly dragging that MapView's own
+  camera across zoom levels during download (looked exactly like a
+  runaway multi-hundred-km download; fixed by using the `MapView`-free
+  `CacheManager` constructor), and a progress percentage that legitimately
+  exceeds 100% (a real `osmdroid` tile-count-estimate quirk, fixed by
+  clamping the display). Verified with Wi-Fi and mobile data both
+  disabled: the downloaded area renders and pans correctly, and panning
+  outside the 2km radius correctly shows nothing cached. A second
+  `adb pm clear` data-wipe mistake happened while testing this — see §5.
+- **Fixed two more real maps bugs the same day**, both found only by the
+  user actually using the feature after it shipped: the live map
+  streaming tiles from the network anywhere panned to once online (not
+  just the downloaded area), and a real, visible delay before the map
+  displayed anything right after a download hit 100%. Also raced
+  `GPS_PROVIDER`/`NETWORK_PROVIDER` instead of GPS-only, cutting a 30s
+  location timeout down to single-digit seconds. See §9.
+- **Added real location to SOS and to 1-hop peers, plus a map redesign**
+  (§10) — the user's own explicit next step after maps, plus a demo-value
+  ask ("both phones show up on the map"). Built and tested via a new
+  debug-only `SosSimulator` tool on a single device (still no second
+  phone available this session). A combined-bounding-box camera fix (so
+  a marker outside the download area's own viewport gets auto-framed)
+  was built, then explicitly reverted at the user's request — the fixed
+  download-area viewport is the one that matters for the real use case,
+  and chasing every marker would make the camera jump around
+  unpredictably as new ones arrive. See §10's known gaps.
 
 ## 8. SOS broadcast
 
@@ -531,19 +609,30 @@ an independent collector on `MessageRouter.inboundApplicationPackets`
 rather than routing through `ChatViewModel`), a `sos_alerts` Room table
 (migration 3→4, see `AppDatabase.kt`), and Chat-tab UI
 (`ChatScreen.kt`'s `SosReportSection`/`HoldToSendRow`/`SosLogRow`,
-`MainActivity`'s app-wide `SosInterruptDialog`, `ui/components/HazardEdge.kt`
-for the visual break from the ledger's calm vocabulary — see `DESIGN.md`).
-Sending is a collapsed row above "I'm Safe" that expands into a category
-picker, each category needing a genuine 1.1s press-and-hold (a filling bar,
-not a circular countdown ring — a deliberate simplification for reliable
-implementation under real testing time) rather than a single tap, since a
-false SOS is costly in a way a false "I'm Safe" isn't. Receiving shows a
-non-dismissible interrupt dialog (works from any tab, not just Chat) plus
-a reviewable log shared with the sender's own outgoing history. Wire uses
-`MessageType.SOS_BROADCAST` (`0x40`), already Cedar-gated at 5/minute per
-sender before this session (`assets/cedar/policies.cedar`) — no router or
-policy changes were needed, only the payload format and the two ends that
-were missing.
+`ui/components/HazardEdge.kt` for the visual break from the ledger's calm
+vocabulary — see `DESIGN.md`). Sending is a collapsed row above "I'm Safe"
+that expands into a category picker, each category needing a genuine 1.1s
+press-and-hold (a filling bar, not a circular countdown ring — a
+deliberate simplification for reliable implementation under real testing
+time) rather than a single tap, since a false SOS is costly in a way a
+false "I'm Safe" isn't. Wire uses `MessageType.SOS_BROADCAST` (`0x40`),
+already Cedar-gated at 5/minute per sender before this session
+(`assets/cedar/policies.cedar`) — no router or policy changes were needed,
+only the payload format and the two ends that were missing.
+
+**Receiving was originally a non-dismissible full-screen interrupt
+dialog** — replaced later the same session, direct user feedback, with a
+2-3s pulsing animation on the alert's own card in the log plus a small
+"SOS" nav-bar tag when you're on another tab (see §7's 2026-09-20 entry).
+A per-row `LazyColumn`-recycling bug (the pulse replaying on scroll) was
+found and fixed by moving "have I already pulsed this" tracking off
+per-row `remember` and onto the ViewModel (`SosViewModel.pulsedSosIds`),
+which survives a row scrolling out of the visible window and back.
+
+**Real GPS location was added 2026-09-20** (see §10) — an SOS now carries
+the sender's coordinates when a quick fix is available, shown on the
+card in place of the old hop-count line, with a button that opens the Map
+tab centered on that exact report.
 
 **Verified on real single-device hardware this pass**: send → appears in
 the local log with the right category and "sent to everyone in range" →
@@ -552,12 +641,12 @@ relaunch (proves the Room migration and insert both actually committed,
 not just in-memory state) → a quick tap does not send, only a completed
 hold does → multiple sends stack newest-first with distinct IDs. Also
 verified the **receive path**, without a second phone: a synthetic
-incoming alert inserted directly into the same `sos_alerts` table the
-real receive path writes to (same DAO, same Flow, same ViewModel — a
-faithful exercise of the real code path, not a UI mockup) correctly
-triggered `SosInterruptDialog` from a cold app state, and acknowledging
-it moved it into the log with the right sender/category/hop-count text.
-**Still not verified**: an actual over-the-air delivery end to end
+incoming packet fed through the real `MessageRouter.handleInboundBytes`
+entry point (see §10's `SosSimulator` — the exact real decode → Cedar
+gate → Room → Compose pipeline a real BLE arrival would use, not a UI
+mockup) correctly pulsed the alert's card and populated the log with the
+right sender/category/hop-count text, and acknowledging it cleared the
+pulse. **Still not verified**: an actual over-the-air delivery end to end
 (needs the second phone, same limitation as every other mesh feature in
 this app), and the Cedar 5/minute cap actually throttling a spam attempt
 at a real relay hop. Also not built: an `SOS_ACK` reply type, and any
@@ -583,7 +672,195 @@ so a long alert history can never push the peer list, or an open chat
 thread, off screen. Each row also got a trailing `HH:mm` timestamp
 (reusing the same formatter chat bubbles already use).
 
-## 9. Setting up on a new machine
+## 9. Offline maps
+
+A new, 4th section (`ui/map/MapScreen.kt`, `MapViewModel.kt`), built
+2026-09-20 — see `docs/adr/0020-offline-maps.md` for the full decision
+record. Deliberately **not** framed as a fourth offline pillar: it needs
+real internet once, in advance, and is explicitly preventive (before a
+trip to a remote or high-risk area), not something used during a crisis.
+
+**Library**: `osmdroid` (`org.osmdroid:osmdroid-android:6.1.20`), chosen
+over `MapLibre` GL Native specifically to avoid a third round of native
+`.so` toolchain pain (Cedar, `docs/adr/0017`; MediaPipe,
+`docs/adr/0006`/`0011`) — `osmdroid` is pure Kotlin/Java, verified to dex
+cleanly on this project's pinned toolchain before any feature code was
+written. Real trade-off: `osmdroid` itself is archived upstream (frozen
+at 6.1.20, no further releases) — still fully functional; Mapsforge
+(actively maintained, also pure Java, genuinely vector/offline-first) is
+the honest upgrade path if there's ever time.
+
+**Flow**: request location once (`maps/LocationProvider.kt`, plain
+`LocationManager`, no Play Services) → compute a 2km-radius bounding box
+(`maps/GeoMath.kt`, unit-tested, accounts for real longitude compression
+at latitude) → download raster tiles for zoom 12-17 via `osmdroid`'s
+`CacheManager` → persist the downloaded area's metadata
+(`maps/MapAreaStore.kt`, SharedPreferences, same tier as `NicknameStore`)
+so reopening the app shows the map immediately without re-downloading.
+
+**Real bugs found by testing on-device, not by inspection**:
+1. The public OSM tile server (`TileSourceFactory.MAPNIK`) throws
+   `TileSourcePolicyException` on any bulk download — a real, deliberate
+   `osmdroid` guardrail mirroring that server's own usage policy against
+   bulk/app-embedded fetching. Fixed with a different, honest tile
+   provider (MapTiler, free tier, no card) — never by silencing the
+   guardrail on the same restricted server. The API key lives in
+   `local.properties` (gitignored) → `BuildConfig.MAPTILER_API_KEY`,
+   never committed. See `maps/MapTileSource.kt`.
+2. Building `CacheManager` from the visible, on-screen `MapView` made
+   that MapView's own camera visibly drag across zoom levels while the
+   download ran internally — looked exactly like the download expanding
+   to cover hundreds of kilometers, even though the actual downloaded
+   `BoundingBox` (independently logged and verified) was a correct 2km
+   radius the whole time. Fixed by constructing `CacheManager` from the
+   `MapTileProviderBase`/`ITileSource` + `SqlTileWriter()` overload
+   instead, which has no `MapView` at all and so cannot touch any camera.
+3. The download progress percentage legitimately exceeds 100% (observed
+   past 290%) — `osmdroid`'s own upfront tile-count estimate can run low
+   against the real count at the finest zoom. The download isn't stuck;
+   fixed by clamping the *displayed* value, not the estimate.
+
+**Verified on real hardware**: a full cold-cache download (real GPS fix
+in Maligaon, Guwahati, Assam — not simulated; real MapTiler tiles;
+complete in under two minutes over a real connection, camera stable
+throughout after fix #2). Then, with Wi-Fi and mobile data both
+disabled: the downloaded area still renders and pans correctly with zero
+network, and panning outside the 2km radius correctly shows `osmdroid`'s
+blank placeholder — proof the download is honestly scoped, not secretly
+caching more.
+
+**Known gaps, stated plainly**: only one area can be cached at a time
+(re-download overwrites the previous record); no staleness check on old
+downloads.
+
+**Two more real bugs found later the same day, by the user actually
+watching the download and waiting through it**:
+4. With internet on, the *live* map (not the download) silently streamed
+   tiles from the network for anywhere panned to, not just the downloaded
+   2km — `osmdroid`'s default tile provider falls back to network for any
+   tile not already cached, quietly making the entire "offline map" claim
+   false the moment there's signal. Fixed with
+   `tileProvider.setUseDataConnection(false)` on the live `MapView` — the
+   only place tiles are now allowed to come from is an explicit
+   download, never ambient panning.
+5. Right after a download hit 100%, the live map sat blank for a real,
+   visible delay before showing anything — `osmdroid`'s in-memory tile
+   cache remembers "no tile available" for every tile it tried (and
+   failed) to fetch while nothing existed on disk yet, and those negative
+   entries don't clear themselves. Fixed by calling
+   `tileProvider.clearTileCache()` the moment the download completes.
+   A related but separate finding: the progress bar itself would freeze
+   at a static "100%" for 20-60s while `osmdroid`'s raw percentage kept
+   climbing past its own optimistic estimate (see bug #3 above) —
+   switched to an indeterminate "Finishing up…" spinner in that window
+   instead of a number that looks stuck.
+
+Also fixed: raw `GPS_PROVIDER`-only location could take 30+ seconds for
+a first fix (worse indoors, worse with no internet for A-GPS assistance
+data) even though the phone's own Maps app looks instant — because Maps
+blends in `NETWORK_PROVIDER` (WiFi/cell-tower) fixes, which resolve in
+a couple seconds. `LocationProvider.getCurrentFix` now races both stock
+`LocationManager` providers (still no Play Services) and takes whichever
+answers first.
+
+**AWS**: none used, none needed for this feature — see §4's own note on
+SAM CLI/LocalStack being considered and explicitly declined once the
+user clarified they didn't want any laptop-side companion component,
+even a demo-only one.
+
+## 10. SOS and peer location on the map
+
+Built 2026-09-20, same day as offline maps itself — the user's own
+explicit next step once real device location existed in the app for the
+first time (deferred at the end of §9's own work: "this feature first,
+later we'll see the integrations"). See `docs/adr/0021-sos-location.md`
+and `docs/adr/0022-peer-location.md` for the full decision records.
+
+**SOS location** (`docs/adr/0021`): `SosPacket` gained two optional TLVs
+(raw IEEE-754 double bits, same pattern as everything else in this
+wire format) carrying latitude/longitude — sent as part of the flooded
+broadcast itself, so anyone receiving it gets the coordinates too, not
+just the sender's own local record. `SosManager.broadcastSos` waits up
+to **5 seconds** (not `LocationProvider`'s own 30s default) for a fix
+before sending regardless: this is a one-handed emergency action, and
+blocking it on a slow or missing GPS fix would be worse than sending
+without coordinates. A cached recent fix (e.g. from already having
+opened the Map tab) still resolves near-instantly either way.
+`SosEntity` gained matching nullable columns (migration 5→6). The
+emergency-log card (`ChatScreen.kt`'s `SosLogRow`) now shows
+`26.1445°N, 91.7362°E` in place of the old hop-count line when a fix
+was attached (falling back to the old text when it wasn't — a fix isn't
+guaranteed), plus a small map-icon button that switches to the Map tab
+with that specific report highlighted.
+
+**Peer location** (`docs/adr/0022`): explicitly requested for demo
+value — "it would make it look good in the demo when our phones both
+show up on the map," not organic feature growth, and worth stating
+plainly since it changes the privacy calculus (see the ADR's own
+discussion). `AnnouncementPacket` gained the same lat/lon TLV pattern.
+Critically, `ChatViewModel.sendAnnounce()` attaches only a **cached**
+fix (`LocationProvider.cachedFixOrNull()`, a new synchronous,
+no-GPS-request method) — announces fire every 4-30s, far too often to
+block on a live fix. A peer only shows up on the map once *their* phone
+has a fix cached from doing something else real (opening the Map tab,
+sending an SOS) — this is never continuous tracking. Only **1-hop**
+peers are shown, deliberately: a relayed hop's last-known position could
+be stale by an unbounded amount by the time it reaches you, unlike a
+1-hop peer's own fresh announce. `PeerEntity` gained matching nullable
+columns (migration 6, same as SOS's own version bump would have been —
+see `AppDatabase.kt` for the exact sequencing).
+
+**Map screen redesign, same pass**: every marker (the download-center
+"Your location" pin, 1-hop peers, SOS reports) now uses one standardized
+hand-drawn teardrop pin (`MapScreen.kt`'s `pinDrawable`) instead of
+osmdroid's generic default marker or a plain filled circle — blue/green/
+red respectively, with the tapped-from-a-card SOS report rendered larger
+and amber. Each pin's name is baked directly into the same bitmap above
+the pin head, not left to osmdroid's tap-to-open `Marker.title` bubble —
+a name that only appears after tapping every pin individually defeats
+the point of a "who's around me" map.
+
+**A false alarm found while testing this**: the camera only ever fits
+the downloaded area's own fixed 2km box, so a peer or SOS marker placed
+genuinely outside it is added to the map correctly but sits off-screen
+with nothing visibly wrong — indistinguishable at a glance from "peers
+aren't showing." A combined-bounding-box fix (frame every marker
+present) was built and then explicitly reverted at the user's request:
+the fixed download-area viewport is the one that matters for the real
+use case, and chasing every marker's position would make the camera
+jump around unpredictably as new ones arrive. **Accepted limitation**: a
+marker well outside the downloaded viewport won't be auto-framed —
+manual pan/zoom still finds it.
+
+**How this was tested without a second phone**: `debug/SosSimulator.kt`,
+registered only when `BuildConfig.DEBUG` is true (never in a release
+build), listens for three `adb shell am broadcast` actions
+(`SIMULATE_INCOMING_SOS`, `SIMULATE_INCOMING_PEER`, `CLEAR_SOS_LOG`) and
+feeds a real, correctly wire-encoded packet into
+`MessageRouter.handleInboundBytes` — the exact entry point real BLE
+arrival uses. This exercises the genuine decode → Cedar gate → Room →
+Compose pipeline end to end, just injected at the transport boundary
+instead of over an actual radio; it does not and cannot prove two real
+phones can exchange these packets over BLE, which remains the
+project-wide untested surface described in §5. One incidental, real data
+point *for* that surface: a second physical phone ("CMF by Nothing
+Phone 1") came into range organically during this session's testing and
+reached genuine 1-hop `READY` handshake status in the live peer list —
+observed, not deliberately re-verified with an actual two-way chat/SOS
+exchange this session, so still short of a full field-test claim.
+
+**Known gaps, stated plainly**: no live "you are here" dot — the pin is
+where you were at your last download/SOS/announce, not a continuously
+updating position; no opt-out for peer location beyond simply never
+using the Map tab or sending an SOS (there's no cached fix to attach
+otherwise, but also no explicit consent toggle); a real, minor UI lag
+found during testing — an incoming SOS can need the app brought back to
+the foreground before it appears in the log if the phone's screen went
+idle in between (Compose pauses recomposition while backgrounded, then
+catches up on resume) — not a data-loss bug, just worth knowing before a
+demo (keep the screen awake).
+
+## 11. Setting up on a new machine
 
 1. **JDK**: install Amazon Corretto 11 (`scripts/setup-corretto.sh`), pin
    `org.gradle.java.home` in your own `~/.gradle/gradle.properties` (not
@@ -618,3 +895,9 @@ thread, off screen. Each row also got a trailing `HH:mm` timestamp
    ```
    See `docs/adr/0011` for why this exact model/file variant and not any
    other on that page.
+8. **For the offline-maps tab to actually download anything**: get a
+   free MapTiler API key (maptiler.com, no card, Account → API keys) and
+   add it to your own `local.properties` (gitignored) as
+   `maptiler.api.key=YOUR_KEY`. Without it, the download fails with an
+   honest network/auth error rather than a silently broken map — see
+   §9 and `docs/adr/0020`.

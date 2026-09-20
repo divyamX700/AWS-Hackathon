@@ -22,5 +22,8 @@ data class PeerEntity(
     val lastSeen: Long,
     val lastKnownHopCount: Int,
     /** X.509-encoded ECDSA signing public key from their announce — needed to verify a mesh IOU voucher really came from them. */
-    val signingPublicKeyBase64: String = ""
+    val signingPublicKeyBase64: String = "",
+    /** Nullable: only present if their last announce carried a cached fix — see AnnouncementPacket's own doc for why this is never guaranteed. */
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )

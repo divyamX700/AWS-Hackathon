@@ -33,7 +33,7 @@ import javax.crypto.spec.GCMParameterSpec
  */
 @Database(
     entities = [PeerEntity::class, MessageEntity::class, IouEntity::class, SosEntity::class],
-    version = 4,
+    version = 6,
     exportSchema = true
 )
 @TypeConverters(Converters::class)
@@ -98,12 +98,28 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** Adds real GPS coordinates to an SOS broadcast (see mesh/emergency/SosManager.kt and docs/adr/0021-sos-location.md) — a real migration, never destructive. */
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sos_alerts ADD COLUMN latitude REAL")
+                db.execSQL("ALTER TABLE sos_alerts ADD COLUMN longitude REAL")
+            }
+        }
+
+        /** Adds real GPS coordinates to a peer's announce, for showing direct (1-hop) peers on the map (see mesh/protocol/AnnouncementPacket.kt and docs/adr/0022-peer-location.md) — a real migration, never destructive. */
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE peers ADD COLUMN latitude REAL")
+                db.execSQL("ALTER TABLE peers ADD COLUMN longitude REAL")
+            }
+        }
+
         fun build(context: Context): AppDatabase {
             val passphrase = loadOrCreatePassphrase(context)
             val factory = SupportFactory(SQLiteDatabase.getBytes(passphrase))
             return Room.databaseBuilder(context, AppDatabase::class.java, DB_NAME)
                 .openHelperFactory(factory)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
         }
 

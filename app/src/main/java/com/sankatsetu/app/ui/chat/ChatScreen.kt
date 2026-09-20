@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -51,6 +52,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -70,9 +72,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.ui.window.DialogProperties
 import com.sankatsetu.app.data.SosEntity
 import com.sankatsetu.app.mesh.protocol.SosCategory
 import com.sankatsetu.app.ui.components.SignalBars
@@ -93,7 +95,7 @@ import kotlinx.coroutines.launch
 /** Peer list — the mesh's front door. Tap a peer to open [ChatThreadScreen], long-press to forget a stale one. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenThread: (PeerUiModel) -> Unit) {
+fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenThread: (PeerUiModel) -> Unit, onViewSosOnMap: (String) -> Unit) {
     val state by viewModel.uiState.collectAsState()
     val sosState by sosViewModel.uiState.collectAsState()
     var peerToForget by remember { mutableStateOf<PeerUiModel?>(null) }
@@ -220,14 +222,14 @@ fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenT
                     // scrolling through an ever-growing list to reach chat.
                     if (sosState.alerts.size <= SOS_LOG_INLINE_LIMIT) {
                         itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
-                            SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex)
+                            SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) }, onViewOnMap = { onViewSosOnMap(alert.sosId) })
                         }
                     } else {
                         item {
                             Box(Modifier.heightIn(max = SOS_LOG_ROW_HEIGHT * SOS_LOG_INLINE_LIMIT)) {
                                 LazyColumn {
                                     itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
-                                        SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex)
+                                        SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) }, onViewOnMap = { onViewSosOnMap(alert.sosId) })
                                     }
                                 }
                             }
@@ -343,7 +345,7 @@ private fun SosReportSection(onSend: (SosCategory) -> Unit, modifier: Modifier =
         AnimatedVisibility(visible = expanded, enter = fadeIn(), exit = fadeOut()) {
             Column(Modifier.padding(top = 8.dp)) {
                 Text(
-                    "Reaches every phone in range, not just known peers. No location is sent, only how many hops away. Hold a category to send.",
+                    "Reaches every phone in range, not just known peers. Sends your GPS location if a quick fix is available (never waits more than a few seconds for one). Hold a category to send.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp)
@@ -445,10 +447,55 @@ private const val SOS_LOG_INLINE_LIMIT = 2
  * text color already carry the meaning; a thin hairline divider between
  * rows is enough structure.
  */
+/**
+ * Non-screen-blocking on purpose — an earlier version of this used a
+ * full-screen `AlertDialog` that interrupted whatever the person was
+ * doing, deliberately made non-dismissible. Direct user feedback
+ * replaced that with this: the row itself pulses a correction-ink tint
+ * for a few seconds when it's a fresh, unacknowledged incoming alert,
+ * enough to catch a glancing eye without ever blocking the screen a
+ * received SOS happened to arrive on top of. Tapping an unacknowledged
+ * row clears its own "NEW" pill — the row itself is now what the old
+ * dialog's confirm button was.
+ *
+ * The pulse is a plain coroutine-driven alpha toggle, not
+ * `rememberInfiniteTransition`, specifically so it has a real end (2.5s,
+ * ~3-4 pulses) rather than running forever — an alert that's still
+ * unacknowledged an hour later shouldn't still be flashing.
+ */
 @Composable
-private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
+private fun SosLogRow(alert: SosEntity, showDivider: Boolean, onAcknowledge: () -> Unit, consumeAttentionPulse: () -> Boolean, onViewOnMap: () -> Unit) {
     val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
-    Column(Modifier.fillMaxWidth().height(SOS_LOG_ROW_HEIGHT)) {
+    val isNewIncoming = !alert.isOutgoing && !alert.acknowledged
+    val lat = alert.latitude
+    val lon = alert.longitude
+
+    var pulseOn by remember { mutableStateOf(false) }
+    LaunchedEffect(alert.sosId, isNewIncoming) {
+        // consumeAttentionPulse is backed by a set on SosViewModel, not
+        // remember — it survives this row scrolling out of the lazy list's
+        // window and back, so re-entering composition (which restarts this
+        // effect) doesn't replay the pulse a second time. See that
+        // function's own doc for the bug this fixes.
+        if (isNewIncoming && consumeAttentionPulse()) {
+            val until = System.currentTimeMillis() + 2500
+            while (System.currentTimeMillis() < until) {
+                pulseOn = true
+                delay(350)
+                pulseOn = false
+                delay(350)
+            }
+        }
+    }
+    val pulseAlpha by animateFloatAsState(if (pulseOn) 0.28f else 0f, animationSpec = tween(300), label = "sosPulse")
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(SOS_LOG_ROW_HEIGHT)
+            .background(SankatSetuColors.StatusCritical.copy(alpha = pulseAlpha))
+            .then(if (isNewIncoming) Modifier.clickable(onClick = onAcknowledge) else Modifier)
+    ) {
         Row(
             Modifier.fillMaxWidth().weight(1f).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -460,11 +507,29 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
                     if (alert.isOutgoing) "You reported: $category" else "${alert.senderNickname}: $category",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Text(
-                    if (alert.isOutgoing) "Sent to everyone in range" else if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed",
-                    style = ConsoleReadoutStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        // A real fix isn't guaranteed (SosManager only waits
+                        // a few seconds before sending regardless — see its
+                        // own doc) -- falling back to the old hop-count line
+                        // when there's no location is more honest than
+                        // showing nothing.
+                        if (lat != null && lon != null) formatCoordinates(lat, lon)
+                        else if (alert.isOutgoing) "Sent to everyone in range" else if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed",
+                        style = ConsoleReadoutStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (lat != null && lon != null) {
+                        IconButton(onClick = onViewOnMap, modifier = Modifier.size(22.dp).padding(start = 2.dp)) {
+                            Icon(
+                                Icons.Filled.Map,
+                                contentDescription = "View on map",
+                                tint = SankatSetuColors.SignalBlue,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
@@ -472,7 +537,7 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
                     style = ConsoleReadoutStyle.copy(fontSize = 10.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (!alert.isOutgoing && !alert.acknowledged) {
+                if (isNewIncoming) {
                     Spacer(Modifier.height(4.dp))
                     StatusPill("NEW", SankatSetuColors.StatusCritical)
                 }
@@ -484,33 +549,11 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
     }
 }
 
-/**
- * The interrupting surface for a fresh incoming SOS — deliberately not
- * dismissible by back press or an outside tap, the one moment in this
- * app's whole vocabulary that earns breaking that convention (see
- * docs/TODO.md's ideation: "this may be the one legitimate modal-worthy
- * moment in the whole app"). Shown from MainActivity above whichever tab
- * the person is currently on, since they might not be on Chat when it
- * arrives.
- */
-@Composable
-fun SosInterruptDialog(alert: SosEntity, onAcknowledge: () -> Unit) {
-    val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
-    AlertDialog(
-        onDismissRequest = {},
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-        icon = { Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = SankatSetuColors.StatusCritical) },
-        title = { Text("Emergency: $category", color = SankatSetuColors.StatusCritical) },
-        text = {
-            Text(
-                "${alert.senderNickname} reported this ${if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed"}. " +
-                    "No location is available, only how many hops away they are."
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onAcknowledge) { Text("Acknowledge") }
-        }
-    )
+/** 4 decimal places is ~11m precision at the equator -- enough to place someone on a street, not their exact doorstep, and matches the precision GeoMath's own bounding-box math already works at. */
+private fun formatCoordinates(lat: Double, lon: Double): String {
+    val latHemisphere = if (lat >= 0) "N" else "S"
+    val lonHemisphere = if (lon >= 0) "E" else "W"
+    return "%.4f°%s, %.4f°%s".format(kotlin.math.abs(lat), latHemisphere, kotlin.math.abs(lon), lonHemisphere)
 }
 
 /**

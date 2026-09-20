@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,11 +39,21 @@ import com.sankatsetu.app.ui.assistant.AssistantViewModel
 import com.sankatsetu.app.ui.chat.ChatListScreen
 import com.sankatsetu.app.ui.chat.ChatThreadScreen
 import com.sankatsetu.app.ui.chat.ChatViewModel
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
 import com.sankatsetu.app.ui.chat.PeerUiModel
-import com.sankatsetu.app.ui.chat.SosInterruptDialog
 import com.sankatsetu.app.ui.emergency.SosViewModel
+import com.sankatsetu.app.ui.map.MapScreen
+import com.sankatsetu.app.ui.map.MapViewModel
 import com.sankatsetu.app.ui.pay.PayScreen
 import com.sankatsetu.app.ui.pay.PayViewModel
+import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
+import com.sankatsetu.app.ui.theme.SankatSetuColors
 import com.sankatsetu.app.ui.theme.SankatSetuTheme
 
 // Real drawn icons, not emoji — see docs/adr/0013-operate-mode-color-and-icons.md.
@@ -57,6 +68,7 @@ import com.sankatsetu.app.ui.theme.SankatSetuTheme
 private enum class Tab(val label: String, val icon: ImageVector) {
     CHAT("Chat", Icons.AutoMirrored.Filled.Chat),
     PAY("Pay", Icons.Filled.Payments),
+    MAP("Map", Icons.Filled.Map),
     ASSISTANT("Assistant", Icons.Filled.AutoAwesome)
 }
 
@@ -98,6 +110,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var assistantViewModel: AssistantViewModel
     private lateinit var payViewModel: PayViewModel
     private lateinit var sosViewModel: SosViewModel
+    private lateinit var mapViewModel: MapViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -114,7 +127,8 @@ class MainActivity : ComponentActivity() {
                         peerDao = app.container.database.peerDao(),
                         messageDao = app.container.database.messageDao(),
                         nicknameStore = app.container.nicknameStore,
-                        bluetoothState = app.container.bluetoothOn
+                        bluetoothState = app.container.bluetoothOn,
+                        locationProvider = app.container.locationProvider
                     ) as T
                 }
             }
@@ -153,6 +167,21 @@ class MainActivity : ComponentActivity() {
             }
         )[SosViewModel::class.java]
 
+        mapViewModel = ViewModelProvider(
+            this,
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return MapViewModel(
+                        locationProvider = app.container.locationProvider,
+                        mapAreaStore = app.container.mapAreaStore,
+                        sosManager = app.container.sosManager,
+                        peerDao = app.container.database.peerDao()
+                    ) as T
+                }
+            }
+        )[MapViewModel::class.java]
+
         requestPermissions.launch(requiredPermissions())
 
         setContent {
@@ -168,6 +197,7 @@ class MainActivity : ComponentActivity() {
                     // it from the live uiState below keeps it current.
                     var openThreadPeerId by remember { mutableStateOf<String?>(null) }
                     val chatState by chatViewModel.uiState.collectAsState()
+                    val sosState by sosViewModel.uiState.collectAsState()
 
                     // System Back / edge-swipe must never exit the app out
                     // from under an open thread or a non-home tab — it
@@ -188,10 +218,40 @@ class MainActivity : ComponentActivity() {
                                     tonalElevation = 0.dp
                                 ) {
                                     Tab.entries.forEach { tab ->
+                                        // A small tag, not a blocking dialog, for "something arrived
+                                        // while you weren't on Chat" — see the SosLogRow doc in
+                                        // ChatScreen.kt for why the old full-screen interrupt was
+                                        // replaced. A plain Material dot read as too subtle for
+                                        // something genuinely emergency-relevant (direct feedback),
+                                        // so this spells out "SOS" instead of just coloring a dot.
+                                        // Only shown for a tab you're NOT currently on: once you're
+                                        // on Chat the log itself is the notification.
+                                        val showSosTag = tab == Tab.CHAT && currentTab != Tab.CHAT && sosState.hasUnreadIncoming
                                         NavigationBarItem(
                                             selected = currentTab == tab,
                                             onClick = { currentTab = tab },
-                                            icon = { Icon(tab.icon, contentDescription = null) },
+                                            icon = {
+                                                if (showSosTag) {
+                                                    Box {
+                                                        Icon(tab.icon, contentDescription = null)
+                                                        Box(
+                                                            Modifier
+                                                                .align(Alignment.TopEnd)
+                                                                .offset(x = 14.dp, y = (-8).dp)
+                                                                .background(SankatSetuColors.StatusCritical, RoundedCornerShape(3.dp))
+                                                                .padding(horizontal = 4.dp, vertical = 1.dp)
+                                                        ) {
+                                                            Text(
+                                                                "SOS",
+                                                                color = Color.White,
+                                                                style = ConsoleReadoutStyle.copy(fontSize = 9.sp)
+                                                            )
+                                                        }
+                                                    }
+                                                } else {
+                                                    Icon(tab.icon, contentDescription = null)
+                                                }
+                                            },
                                             label = { Text(tab.label, style = MaterialTheme.typography.labelMedium) },
                                             colors = androidx.compose.material3.NavigationBarItemDefaults.colors(
                                                 indicatorColor = MaterialTheme.colorScheme.primaryContainer
@@ -209,12 +269,21 @@ class MainActivity : ComponentActivity() {
                                     Tab.CHAT -> {
                                         val thread = openThreadPeerId?.let { id -> chatState.peers.find { it.peerIdBase64 == id } }
                                         if (thread == null) {
-                                            ChatListScreen(viewModel = chatViewModel, sosViewModel = sosViewModel, onOpenThread = { openThreadPeerId = it.peerIdBase64 })
+                                            ChatListScreen(
+                                                viewModel = chatViewModel,
+                                                sosViewModel = sosViewModel,
+                                                onOpenThread = { openThreadPeerId = it.peerIdBase64 },
+                                                onViewSosOnMap = { sosId ->
+                                                    mapViewModel.highlightSos(sosId)
+                                                    currentTab = Tab.MAP
+                                                }
+                                            )
                                         } else {
                                             ChatThreadScreen(viewModel = chatViewModel, peer = thread, onBack = { openThreadPeerId = null })
                                         }
                                     }
                                     Tab.PAY -> PayScreen(viewModel = payViewModel)
+                                    Tab.MAP -> MapScreen(viewModel = mapViewModel)
                                     Tab.ASSISTANT -> AssistantScreen(
                                         viewModel = assistantViewModel,
                                         knowledgeBase = app.container.knowledgeBase,
@@ -224,16 +293,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                    }
-
-                    // Shown above whichever tab the person is currently on,
-                    // not just the Chat tab — someone in danger might be on
-                    // Pay or Assistant when a nearby SOS arrives. See
-                    // SosInterruptDialog's own doc for why this is the one
-                    // deliberately non-dismissible surface in the app.
-                    val sosState by sosViewModel.uiState.collectAsState()
-                    sosState.latestUnacknowledgedIncoming?.let { alert ->
-                        SosInterruptDialog(alert = alert, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) })
                     }
                 }
             }

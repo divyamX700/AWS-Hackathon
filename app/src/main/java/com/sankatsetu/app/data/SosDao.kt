@@ -16,4 +16,7 @@ interface SosDao {
 
     @Query("UPDATE sos_alerts SET acknowledged = 1 WHERE sosId = :sosId")
     suspend fun acknowledge(sosId: String)
+
+    @Query("DELETE FROM sos_alerts")
+    suspend fun deleteAll()
 }

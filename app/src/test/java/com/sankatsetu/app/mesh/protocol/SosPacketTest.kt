@@ -16,6 +16,18 @@ class SosPacketTest {
         assertEquals(original.sosId, decoded!!.sosId)
         assertEquals(original.category, decoded.category)
         assertEquals(original.createdAt, decoded.createdAt)
+        assertNull(decoded.latitude)
+        assertNull(decoded.longitude)
+    }
+
+    @Test
+    fun `encode then decode round-trips a real location fix`() {
+        val original = SosPacket(category = SosCategory.FLOOD, createdAt = 1234567890L, latitude = 26.1445, longitude = 91.7362)
+        val decoded = SosPacket.decode(original.encode()!!)
+
+        assertNotNull(decoded)
+        assertEquals(original.latitude, decoded!!.latitude)
+        assertEquals(original.longitude, decoded.longitude)
     }
 
     @Test

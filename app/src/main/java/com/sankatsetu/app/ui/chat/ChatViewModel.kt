@@ -10,6 +10,7 @@ import com.sankatsetu.app.data.PeerEntity
 import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.crypto.NicknameStore
 import com.sankatsetu.app.mesh.crypto.NoiseSession
+import com.sankatsetu.app.maps.LocationProvider
 import com.sankatsetu.app.mesh.protocol.AnnouncementPacket
 import com.sankatsetu.app.mesh.protocol.MeshPacket
 import com.sankatsetu.app.mesh.protocol.MessageType
@@ -65,7 +66,8 @@ class ChatViewModel(
     private val messageDao: MessageDao,
     private val nicknameStore: NicknameStore,
     /** The real adapter state (AppContainer.bluetoothOn) — see that property's doc for why this can't be a value ChatViewModel invents itself. */
-    private val bluetoothState: StateFlow<Boolean>
+    private val bluetoothState: StateFlow<Boolean>,
+    private val locationProvider: LocationProvider
 ) : ViewModel() {
 
     // One Noise session per peer we've ever started a handshake with.
@@ -142,10 +144,19 @@ class ChatViewModel(
     }
 
     private suspend fun sendAnnounce() {
+        // Cached-only, never a live GPS request -- see AnnouncementPacket's
+        // own doc and LocationProvider.cachedFixOrNull's doc for why: this
+        // fires every 4-30s, far too often to block on real location.
+        // A peer only shows up on the map once this device has a fix
+        // cached from something else real (opening the Map tab, sending an
+        // SOS). See docs/adr/0022-peer-location.md.
+        val fix = locationProvider.cachedFixOrNull()
         val packet = AnnouncementPacket(
             nickname = nicknameStore.get(),
             noisePublicKey = identity.noisePublicKey,
-            signingPublicKey = identity.signingPublicKeyBytes()
+            signingPublicKey = identity.signingPublicKeyBytes(),
+            latitude = fix?.latitude,
+            longitude = fix?.longitude
         )
         val encoded = packet.encode() ?: return
         router.broadcast(MessageType.ANNOUNCE, encoded, sign = true)
@@ -192,11 +203,13 @@ class ChatViewModel(
                     firstSeen = now,
                     lastSeen = now,
                     lastKnownHopCount = hopCount.toInt(),
-                    signingPublicKeyBase64 = Base64.encodeToString(announce.signingPublicKey, Base64.NO_WRAP)
+                    signingPublicKeyBase64 = Base64.encodeToString(announce.signingPublicKey, Base64.NO_WRAP),
+                    latitude = announce.latitude,
+                    longitude = announce.longitude
                 )
             )
         } else {
-            peerDao.touch(peerIdB64, now, hopCount.toInt(), announce.nickname)
+            peerDao.touch(peerIdB64, now, hopCount.toInt(), announce.nickname, announce.latitude, announce.longitude)
         }
 
         // Any announce from a peer means the mesh currently has a path to

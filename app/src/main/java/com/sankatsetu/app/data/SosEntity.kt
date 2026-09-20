@@ -24,5 +24,10 @@ data class SosEntity(
     val hopCount: Int,
     val receivedAt: Long,
     val acknowledged: Boolean,
-    val isOutgoing: Boolean
+    val isOutgoing: Boolean,
+    // Nullable: a location fix isn't guaranteed within the few seconds
+    // SosManager.broadcastSos waits before sending regardless -- see its
+    // own doc for why this can't just block until GPS resolves.
+    val latitude: Double? = null,
+    val longitude: Double? = null
 )

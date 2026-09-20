@@ -27,6 +27,15 @@ questions from a bundled knowledge base with no network call ever. Success
 is a stranger in a disaster zone reaching a neighbor's phone, getting
 correct guidance, and settling a debt later — not a demo checkbox.
 
+A 4th, deliberately separate section — offline maps — was added
+2026-09-20: a genuinely different category from the three pillars above,
+since it requires real internet *once, in advance*, to download a small
+area's map before anything happens, not during a crisis (there's no
+internet to use during one). Framed as preventive: something a tourist or
+resident does before heading into a known high-risk or remote area, the
+same way side-loading the LLM model is a setup step, not a live feature.
+See `docs/adr/0020-offline-maps.md`.
+
 ## Positioning
 
 Every mainstream messaging/payment app (WhatsApp, GPay, PhonePe) is a thin
@@ -75,7 +84,20 @@ tested; two-phone multi-hop mesh not yet field-tested, see
   relaying it can still read it. The counterpart to "I'm Safe," built
   2026-09-20; see `docs/TODO.md` for the reasoning and honest gaps (a real
   two-phone delivery of this is untested, same limitation as the rest of
-  the mesh).
+  the mesh). Carries a real GPS fix when one's available within 5 seconds
+  (never blocks the send waiting longer than that) — see
+  `docs/adr/0021-sos-location.md`.
+- Offline maps (new 4th section, built 2026-09-20): download roughly a
+  2km-radius map once, while online, then pan/zoom it with zero
+  connectivity afterward — verified on real hardware with Wi-Fi and
+  mobile data both disabled. The app's first genuine use of real device
+  location (a one-time GPS fix to center the download), not just a
+  declared permission. See `docs/adr/0020-offline-maps.md` for the real
+  bugs this pass found and fixed, and the honest gaps (single-area cache
+  only). The same map also shows every SOS report and every direct
+  (1-hop) peer with a location on file, as standardized pins — see
+  `docs/adr/0022-peer-location.md`, including why this is explicitly
+  demo-driven and the privacy trade-off that comes with it.
 
 Not built / aspirational only (present in the original PRD, out of current
 scope): Cedar-authorized channels, Nostr internet-bridge for reaching
@@ -85,9 +107,14 @@ English. Do not assume any of these exist in code.
 
 Constraints: `compileSdk`/`targetSdk` pinned to 34 (not 35 — a real
 toolchain incompatibility, see `docs/adr/0006`), JDK 11, `minSdk` 29, no
-DI framework (hand-rolled `AppContainer`), no backend/server of any kind —
-nothing in this app calls the internet except optional future
-connectivity-return features, which do not exist yet.
+DI framework (hand-rolled `AppContainer`), no backend/server of any kind
+this app operates — the mesh, payments, and assistant pillars never call
+the internet. The one real exception, added 2026-09-20: the offline-map
+download calls a third-party tile provider (MapTiler) once, by design,
+since that's the entire point of that feature (see above) — this is not
+a server this project runs or controls, just an external service the
+phone fetches from before a trip, the same category as `curl`-ing the
+LLM model file during setup.
 
 ## Brand Commitments
 
