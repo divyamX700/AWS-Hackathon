@@ -1,23 +1,33 @@
 package com.sankatsetu.app.payments
 
 /**
- * Builds the `*99#` USSD string for NPCI's "send money to a VPA" menu
- * branch, from a scanned QR's [UpiQrPayload] — pure Kotlin, unit tested
- * directly, same discipline as [UpiQrParser]. `*99*1*3*<vpa>*<amount>#` is
- * `*99#`'s published menu path: `1` = Send Money, `3` = "To VPA". This is
- * the mechanism Flowpay's own README describes for its "Scan QR" entry
- * point ("Scan QR → dials `*99*1*3#`, the USSD scan-to-pay branch") — this
- * project could not find Flowpay's own builder for that exact string in
- * its public source (only `Upi123CallStringBuilder`, the DTMF-call path for
- * manual entry, was present at the paths this project could read), so this
- * is a fresh implementation of the same publicly-documented NPCI menu
- * structure, not a direct port. **Caveat honestly**: the exact digit
- * sequence a live carrier's `*99#` gateway accepts is not verified against
- * a real network by this project — there was no live USSD session to test
- * against. [UssdDialer] already requires the person's own final tap in the
- * system dialer before anything is sent to the network, which is the real
- * safety boundary regardless of whether this exact string needs a later
- * correction.
+ * Validates a scanned VPA and an entered amount before the scan-to-pay flow
+ * proceeds — pure Kotlin, unit tested directly, same discipline as
+ * [UpiQrParser].
+ *
+ * This does NOT build a `*99*1*3*<vpa>*<amount>*<remarks>#`-style dial
+ * string anymore, even though that format is real and documented (the
+ * public NUUP spec at github.com/librefin-in/nuup-specification §1.3). A
+ * live device test found no way to get a VPA (which has letters and an
+ * `@`) through any Android dial mechanism intact: `Intent.ACTION_DIAL`'s
+ * own dial-pad UI mangles it via keypad letter-to-digit mapping before it
+ * reaches the network (a real, confirmed "not a valid UPI ID" carrier
+ * response on a correctly-scanned VPA); `Intent.ACTION_CALL` — which skips
+ * that UI and hands the string straight to the telecom framework — was
+ * tried next and failed silently instead (no response at all), consistent
+ * with the telecom framework's own number validation rejecting a
+ * `@`-containing string before ever placing the call.
+ *
+ * Tracing Flowpay's own real, shipped `QRScannerActivity.kt` (Apache 2.0)
+ * settled it: their actual QR-to-pay code does not embed the VPA into a
+ * dial string either. It copies the VPA to the clipboard, then dials the
+ * **bare** `*99*1*3#` menu shortcut (Send Money → To VPA, no VPA or amount
+ * appended) via `ACTION_CALL`, and the person pastes the VPA and types the
+ * amount into the carrier's own live interactive prompt. This project's
+ * `PayScreen.kt` now does exactly that — this class exists only to
+ * validate the VPA/amount pair before that flow proceeds, matching what
+ * the confirmation dialog needs to enable its "Pay" button. See
+ * docs/adr/0022-qr-scan-to-pay.md's fourth update for the full story.
  */
 object UpiUssdScanToPayBuilder {
 
@@ -28,17 +38,17 @@ object UpiUssdScanToPayBuilder {
     enum class Reason { MISSING_VPA, INVALID_VPA, MISSING_AMOUNT, AMOUNT_NOT_A_NUMBER, AMOUNT_BELOW_MINIMUM, AMOUNT_ABOVE_CAP }
 
     sealed class Result {
-        data class Valid(val ussdCode: String) : Result()
+        data object Valid : Result()
         data class Invalid(val reason: Reason) : Result()
     }
 
     // Same VPA shape UpiQrParser already validated a scanned VPA against —
-    // re-checked here too since this builder also accepts a manually
-    // corrected/typed VPA, not only an already-validated scanned one.
+    // re-checked here too since this also gates a manually corrected/typed
+    // VPA, not only an already-validated scanned one.
     private val VPA_REGEX = Regex("^[a-zA-Z0-9.\\-_]{2,256}@[a-zA-Z][a-zA-Z0-9]{1,64}$")
 
-    /** [amountRupees] as a plain decimal string, e.g. "150" or "150.50" — never paise here, USSD dials rupees. */
-    fun build(vpa: String, amountRupees: String): Result {
+    /** [amountRupees] as a plain decimal string, e.g. "150" or "150.50". */
+    fun validate(vpa: String, amountRupees: String): Result {
         val trimmedVpa = vpa.trim()
         if (trimmedVpa.isEmpty()) return Result.Invalid(Reason.MISSING_VPA)
         if (!VPA_REGEX.matches(trimmedVpa)) return Result.Invalid(Reason.INVALID_VPA)
@@ -50,6 +60,6 @@ object UpiUssdScanToPayBuilder {
         if (value < MIN_AMOUNT_RUPEES) return Result.Invalid(Reason.AMOUNT_BELOW_MINIMUM)
         if (value > MAX_AMOUNT_RUPEES) return Result.Invalid(Reason.AMOUNT_ABOVE_CAP)
 
-        return Result.Valid("*99*1*3*$trimmedVpa*$trimmedAmount#")
+        return Result.Valid
     }
 }

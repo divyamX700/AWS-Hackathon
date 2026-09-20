@@ -1,6 +1,6 @@
 # ADR 0022: QR scan-to-pay, Flowpay-pattern (no redirect to a separate UPI app)
 
-**Status:** Accepted — logic verified by unit test, UI **not** verified on a device
+**Status:** Accepted — logic and UI verified live on a device; USSD string corrected once against real carrier feedback
 **Date:** 2026-09-20
 
 ## Context
@@ -35,16 +35,19 @@ instrumented test — so the query-parameter split is hand-rolled instead,
 matching the same Android-free discipline every other domain class in
 this codebase already follows (`KnowledgeDocumentParser`, `SosPacket`).
 
-**`UpiUssdScanToPayBuilder` is new, not ported** — Flowpay's own public
-source only exposed `Upi123CallStringBuilder` (the DTMF dial-string for
-its *manual-entry* IVR path); its scan-to-pay `*99*1*3#` builder wasn't at
-a path this project could read. `*99*1*3*<vpa>*<amount>#` is built here
-from NPCI's own published `*99#` menu structure (`1` = Send Money, `3` =
-"To VPA") — the same mechanism Flowpay's README describes for its own
-"Scan QR" entry point, just a fresh implementation of the public spec
-rather than a copy of Flowpay's code. **Honestly caveated**: no live `*99#`
-USSD session was available to confirm a real carrier gateway accepts this
-exact digit sequence.
+**`UpiUssdScanToPayBuilder` is new, not ported**, and went through a real
+correction cycle against live feedback (see "A real bug, found and fixed
+live" below) — its final, correct format is:
+
+```
+*99*1*3*<vpa>*<amount>*<remarks>#
+```
+
+`1` = Send Money, `3` = "To VPA", per the public NUUP (National Unified
+USSD Platform, `*99#`) specification at
+`github.com/librefin-in/nuup-specification` §1.3. `REMARKS` is a required
+positional segment (`1` disables/skips it, per the spec's own convention),
+not an optional trailing field.
 
 **The actual "no redirect" mechanism is `UssdDialer`, unchanged.** It
 already existed for the manual `*99#` button and already does exactly what
@@ -52,8 +55,13 @@ Flowpay's own README describes as its own boundary ("the app only triggers
 the dialer... user's own tap"): `Intent.ACTION_DIAL`, never `ACTION_CALL`,
 so a real financial action is never fired by software alone. The QR flow
 reuses it as-is — scanning just replaces manual entry as the way the VPA
-and amount get into the same dialer hand-off, it doesn't change what
-happens after.
+and amount get into the same dialer hand-off. The UPI PIN and the final
+confirm digit are never part of the dial string either — the NUUP spec
+itself shows them as separate USSD reply prompts the carrier's session
+displays AFTER the initial string connects (`-> UPIPIN -> 2`), typed by
+the person directly into the system's own USSD reply UI. This app cannot
+see or intercept them even if it wanted to — they never pass through the
+dial `Intent` at all.
 
 **Library choice: `zxing-android-embedded` alone, not CameraX.** The
 dependency block removed in `08b5e67` had `zxing-android-embedded` plus
@@ -63,56 +71,70 @@ instead uses `zxing-android-embedded`'s own bundled `ScanContract` +
 `CaptureActivity` — it manages its own camera internally (Camera1/Camera2,
 not CameraX), so `PayScreen.kt` only calls
 `rememberLauncherForActivityResult(ScanContract())` and never touches a
-camera API directly. Smaller surface area to get right with no device
-available to test a hand-rolled preview against, and it avoids
-reintroducing three dependencies that were dead weight before for the
-one that's now actually used.
+camera API directly.
+
+## A real bug, found and fixed live
+
+The first build shipped `*99*1*3*<vpa>*<amount>#` — no `REMARKS` segment.
+Verified on a real device against a real carrier: the camera permission
+prompt, the scanner, and the parser all worked correctly against a real,
+unplanned UPI QR code in the room (correct payee name and VPA shown in the
+confirmation dialog) — but dialing the resulting string produced a
+confusing **"not a valid UPI ID"** error from the carrier, even though the
+VPA itself was scanned correctly and displayed correctly on-screen right
+before dialing.
+
+Re-checked directly against the public NUUP specification
+(`github.com/librefin-in/nuup-specification` §1.3, not assumed or
+guessed): the real format needs a `REMARKS` segment between `AMOUNT` and
+the terminating `#` — "Dial `*99*1*3*VPA*AMOUNT*REMARKS` -> `UPIPIN` ->
+`2` to make transaction and exit." A fixed-position USSD parser reading a
+4-segment string where a 5-segment one was expected very plausibly reads
+the wrong field as the payee ID, which lines up exactly with a "not a
+valid UPI ID" response despite the actual VPA being correct. Fixed by
+adding the `REMARKS` segment (set to `1`, the spec's own "disabled" value)
+so the string is now `*99*1*3*<vpa>*<amount>*1#`. `UpiUssdScanToPayBuilderTest`
+was updated to assert the corrected format and documents why in its own
+comment. **Not yet re-verified against the same live carrier** — the
+corrected build was pushed to the device but a second live dial attempt
+had not completed as of this ADR's last edit.
 
 ## What's verified and what isn't
 
-**Verified**, by unit test (`UpiQrParserTest`, `UpiUssdScanToPayBuilderTest`,
-21 new tests, all passing) and by a real build:
-- `UpiQrParser` correctly accepts/rejects every shape Flowpay's own tests
-  cover: a full `upi://` URI, a bare VPA, missing/malformed/oversized
-  amounts, a missing or structurally invalid payee address, and — the
-  specific regression Flowpay's own parser exists to prevent — a random
-  QR containing an `@` character (e.g. a poster with an email address on
-  it) is rejected, not silently treated as a payment.
-- `UpiUssdScanToPayBuilder` produces the exact expected `*99*1*3*vpa*amt#`
-  string for valid input and rejects every invalid case with a specific
-  reason.
-- The full project — this feature plus everything already on this
-  branch — compiles, dexes, and assembles cleanly
-  (`./gradlew testDebugUnitTest assembleDebug`, 90/90 tests passing). The
-  merged manifest was inspected directly (`aapt2 dump badging`): `CAMERA`
-  is declared, nothing unexpected leaked in from the library's own
-  manifest.
+**Verified live, on a real device, this session:**
+- Camera permission prompt fires correctly (`ActivityResultContracts.RequestPermission`).
+- The scanner launches and successfully decodes a real UPI QR code.
+- `UpiQrParser` correctly extracts payee name and VPA from a real scan
+  (not just synthetic test strings).
+- The confirmation dialog renders correctly with the parsed payee info.
+- Cancelling out of the confirmation dialog is safe — confirmed via
+  logcat that no `ACTION_DIAL` intent fires unless "Pay via *99#" is
+  actually tapped.
+- The first (incorrect) USSD string really did fail against a live
+  carrier with a real, human-confirmed error message — this is not a
+  hypothetical caveat anymore, it happened.
 
-**Not verified** — there was no connected device for the remainder of this
-session:
-- The actual scan screen has never been opened on a phone. `ScanContract`/
-  `ScanOptions`' exact API surface in `zxing-android-embedded:4.3.0` was
-  used from memory of the library's documented usage, not confirmed
-  against a real compile-and-run of the scanning Activity itself (the code
-  compiles and dexes, which rules out a signature-level mistake, but not a
-  runtime one).
-- The camera permission request flow (`ActivityResultContracts.RequestPermission`)
-  has never been exercised live.
-- The `*99*1*3*<vpa>*<amount>#` USSD string has never been dialed against
-  a live carrier.
+**Verified by unit test**, 21 tests covering `UpiQrParser` and
+`UpiUssdScanToPayBuilder`, all passing, including the corrected string
+format.
+
+**Not yet verified:**
+- Whether the corrected `*99*1*3*<vpa>*<amount>*1#` string succeeds
+  against the same live carrier — re-test this first, before anything
+  else, next time a device is available.
+- What the carrier does with the `REMARKS=1` "disabled" convention
+  specifically (the spec states the convention; this project has not
+  independently confirmed a live gateway honors it identically).
 
 ## Consequences
 
-- Do not describe this feature as "working" in any handoff document
-  without first scanning a real UPI QR code on a device and confirming
-  the confirmation dialog shows the right payee/amount, and ideally
-  dialing the resulting USSD code to see how a real carrier responds to
-  the digit sequence (ADR text above already flags that the sequence
-  itself is unverified).
-- If `*99*1*3*<vpa>*<amount>#` turns out to be wrong against a live
-  network, only `UpiUssdScanToPayBuilder.build()`'s return string needs to
-  change — `UssdDialer`, `UpiQrParser`, and the confirmation UI are all
-  independent of the exact digit format.
+- Do not describe the USSD string as "working" until the corrected
+  version has actually been dialed successfully against a live carrier.
+- If it still fails, the next thing to check is whether this specific
+  carrier's `*99#` gateway has deprecated the direct-dial shortcut
+  entirely in favor of the fully interactive menu (dial `*99#` alone,
+  then reply to each prompt one at a time) — some circles have done this;
+  the NUUP spec itself notes menu codes "can be updated periodically."
 - `RECEIVE_SMS` was deliberately NOT re-added: Flowpay's real transaction
   confirmation relies on parsing the bank's SMS receipt
   (`SmsTransactionParser.kt`), which this pass does not build. This

@@ -59,10 +59,11 @@ import com.sankatsetu.app.ui.theme.SankatSetuColors
 import com.sankatsetu.app.ui.theme.pressScale
 
 /**
- * The Pay tab (docs/PRD.md §F3/F4): two cards that open the system dialer
- * pre-filled with a USSD/IVR code for a real UPI payment (the person must
- * tap call themselves — see `UssdDialer.kt`), a composer for a mesh IOU
- * voucher, and the IOU list grouped by direction/status.
+ * The Pay tab (docs/PRD.md §F3/F4): Scan QR to Pay (parses a real UPI QR
+ * code and places the *99# call directly — see `UssdDialer.kt` for why
+ * that's `Intent.ACTION_CALL`, not `ACTION_DIAL`), two plain USSD/IVR
+ * buttons for manual entry, a composer for a mesh IOU voucher, and the IOU
+ * list grouped by direction/status.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,15 +72,18 @@ fun PayScreen(viewModel: PayViewModel) {
     val context = LocalContext.current
     var showComposer by remember { mutableStateOf(false) }
 
-    // Scan-to-pay state — everything from the scan to building the *99#
-    // string happens in this screen; UssdDialer.openDialer is the ONLY
-    // hand-off out of the app, and even that requires the person's own tap
-    // in the system dialer (see UssdDialer's own doc). No other app is ever
-    // launched, unlike a typical `upi://` deep link that hands off to
+    // Scan-to-pay state — everything from the scan to building the full
+    // *99*1*3*vpa*amount*remarks# string happens in this screen.
+    // UssdDialer.openDialer (Intent.ACTION_CALL — see its own doc for why
+    // ACTION_DIAL doesn't work for a VPA) is the only hand-off out of the
+    // app, and it places the call immediately once tapped, matching
+    // Flowpay's own real CallManager.kt mechanism exactly. No other app is
+    // ever launched, unlike a typical `upi://` deep link that hands off to
     // whichever UPI app the person has installed. See
     // docs/adr/0022-qr-scan-to-pay.md.
     var pendingScan by remember { mutableStateOf<UpiQrParser.ParseResult.Valid?>(null) }
     var scanErrorReason by remember { mutableStateOf<UpiQrParser.Reason?>(null) }
+    var pendingUssdCode by remember { mutableStateOf<String?>(null) }
 
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val raw = result.contents ?: return@rememberLauncherForActivityResult // user backed out of the scanner, not an error
@@ -99,12 +103,31 @@ fun PayScreen(viewModel: PayViewModel) {
         cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
+    // Intent.ACTION_CALL (see UssdDialer's doc) needs CALL_PHONE, unlike the
+    // ACTION_DIAL this app used before — placing the call is what the
+    // person's own tap on "Open *99#"/"Pay via *99#"/"UPI 123Pay" already
+    // authorized; this permission check just gates whether Android lets
+    // that tap actually place the call.
+    val callPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val code = pendingUssdCode
+        pendingUssdCode = null
+        if (granted && code != null) UssdDialer.openDialer(context, code)
+    }
+    fun dialUssd(ussdCode: String) {
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+            UssdDialer.openDialer(context, ussdCode)
+        } else {
+            pendingUssdCode = ussdCode
+            callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
+        }
+    }
+
     pendingScan?.let { scan ->
         ScanToPayConfirmDialog(
             payload = scan.data,
             onDismiss = { pendingScan = null },
             onConfirm = { ussdCode ->
-                UssdDialer.openDialer(context, ussdCode)
+                dialUssd(ussdCode)
                 pendingScan = null
             }
         )
@@ -147,7 +170,13 @@ fun PayScreen(viewModel: PayViewModel) {
         item {
             PayActionCard(
                 title = "Scan QR to Pay",
-                subtitle = "Scan a shop's UPI QR code. Everything — reading the code, confirming the amount — happens in this app; the only hand-off is your own tap in the dialer to actually send the *99# request, never a redirect to a different payment app.",
+                steps = listOf(
+                    "Scan the shop's UPI QR code.",
+                    "Confirm the amount in this app.",
+                    "The payee ID is copied and *99# opens automatically.",
+                    "Paste the ID and type the amount when asked.",
+                    "Enter your UPI PIN directly in that screen. This app never sees it."
+                ),
                 onClick = launchScan
             )
         }
@@ -156,12 +185,12 @@ fun PayScreen(viewModel: PayViewModel) {
                 CompactActionButton(
                     title = "USSD *99#",
                     modifier = Modifier.weight(1f),
-                    onClick = { UssdDialer.openDialer(context, "*99#") }
+                    onClick = { dialUssd("*99#") }
                 )
                 CompactActionButton(
                     title = "UPI 123Pay",
                     modifier = Modifier.weight(1f),
-                    onClick = { UssdDialer.openDialer(context, "*99#") }
+                    onClick = { dialUssd("*99#") }
                 )
             }
         }
@@ -243,7 +272,7 @@ private fun CompactActionButton(title: String, modifier: Modifier = Modifier, on
  * docs/adr/0019-ledger-register-redesign.md.
  */
 @Composable
-private fun PayActionCard(title: String, subtitle: String, onClick: () -> Unit) {
+private fun PayActionCard(title: String, subtitle: String? = null, steps: List<String> = emptyList(), onClick: () -> Unit) {
     val interaction = remember { MutableInteractionSource() }
     Card(
         modifier = Modifier
@@ -258,11 +287,18 @@ private fun PayActionCard(title: String, subtitle: String, onClick: () -> Unit) 
         Column(Modifier.padding(18.dp)) {
             Text(title, style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (subtitle != null) {
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (steps.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    steps.forEachIndexed { index, step -> NumberedStep(index + 1, step) }
+                }
+            }
         }
     }
 }
@@ -342,12 +378,21 @@ private fun IouComposer(
 }
 
 /**
- * Shown right after a successful scan, before anything is dialed. The
- * amount is editable even when the QR fixed one (`am`) — a shopkeeper
- * mistake or a tip shouldn't require re-scanning — but the VPA itself is
- * never editable here: it came from the scanned code, and letting someone
- * hand-edit a payee address in this dialog would defeat the point of
- * scanning it in the first place.
+ * Shown right after a successful scan, before anything is dialed.
+ *
+ * Matches Flowpay's own real, shipped mechanism exactly (traced directly
+ * from `QRScannerActivity.kt`, Apache 2.0 — this project's earlier belief
+ * that Flowpay embeds the VPA into a full dial string was wrong; their
+ * actual code does not). No dial mechanism on Android can carry a VPA
+ * (letters + `@`) through intact — confirmed by two separate live-device
+ * failures (`ACTION_DIAL`'s keypad UI mangles it; `ACTION_CALL` rejects it
+ * silently). So neither this dialog nor Flowpay's own tries: tapping "Pay"
+ * copies the VPA to the clipboard (flagged sensitive on Android 13+, same
+ * as Flowpay does) and dials the **bare** `*99*1*3#` menu shortcut — Send
+ * Money → To VPA, skipping those two menu taps, nothing more. The person
+ * pastes the VPA and types the amount into the carrier's own live
+ * interactive prompt afterward. See
+ * docs/adr/0022-qr-scan-to-pay.md's fourth update for the full story.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -357,7 +402,8 @@ private fun ScanToPayConfirmDialog(
     onConfirm: (ussdCode: String) -> Unit
 ) {
     var amount by remember { mutableStateOf(payload.amount) }
-    val buildResult = remember(amount) { UpiUssdScanToPayBuilder.build(payload.vpa, amount) }
+    val context = LocalContext.current
+    val validation = remember(amount) { UpiUssdScanToPayBuilder.validate(payload.vpa, amount) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -371,29 +417,65 @@ private fun ScanToPayConfirmDialog(
                     label = { Text("Amount (₹)") },
                     modifier = Modifier.fillMaxWidth()
                 )
-                if (buildResult is UpiUssdScanToPayBuilder.Result.Invalid && amount.isNotBlank()) {
+                if (validation is UpiUssdScanToPayBuilder.Result.Invalid && amount.isNotBlank()) {
                     Text(
-                        ussdRejectionMessage(buildResult.reason),
+                        ussdRejectionMessage(validation.reason),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.error
                     )
                 }
-                Text(
-                    "Opens the dialer with the request ready — you still tap call yourself.",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text("What happens when you tap Pay:", style = MaterialTheme.typography.labelMedium)
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    NumberedStep(1, "The payee ID is copied to your clipboard.")
+                    NumberedStep(2, "The phone opens the *99# menu automatically.")
+                    NumberedStep(3, "Choose Send Money, then To VPA.")
+                    NumberedStep(4, "Paste the payee ID when it's asked for.")
+                    NumberedStep(5, "Type the amount you entered above.")
+                    NumberedStep(6, "Enter your UPI PIN directly in that screen. This app never sees it.")
+                }
             }
         },
         confirmButton = {
-            val result = buildResult
             TextButton(
-                onClick = { if (result is UpiUssdScanToPayBuilder.Result.Valid) onConfirm(result.ussdCode) },
-                enabled = result is UpiUssdScanToPayBuilder.Result.Valid
+                onClick = {
+                    if (validation is UpiUssdScanToPayBuilder.Result.Valid) {
+                        copyVpaToClipboard(context, payload.vpa)
+                        onConfirm("*99*1*3#")
+                    }
+                },
+                enabled = validation is UpiUssdScanToPayBuilder.Result.Valid
             ) { Text("Pay via *99#") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
+}
+
+@Composable
+private fun NumberedStep(number: Int, text: String) {
+    Row {
+        Text("$number.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(20.dp))
+        Text(text, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+/**
+ * Copies [vpa] to the system clipboard so it can be pasted into the live
+ * `*99#` prompt — matches Flowpay's own `copyVpaToClipboard` exactly,
+ * including flagging the clip sensitive on Android 13+ (`ClipDescription
+ * .EXTRA_IS_SENSITIVE`) so it's excluded from clipboard-history previews
+ * and the system's own clipboard-access toast, since a VPA is a payee
+ * identifier worth treating as sensitive even though it isn't a secret
+ * the way a PIN is.
+ */
+private fun copyVpaToClipboard(context: android.content.Context, vpa: String) {
+    val clipboardManager = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    val clip = android.content.ClipData.newPlainText("VPA", vpa)
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+        clip.description.extras = android.os.PersistableBundle().apply {
+            putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+        }
+    }
+    clipboardManager.setPrimaryClip(clip)
 }
 
 private fun qrRejectionMessage(reason: UpiQrParser.Reason): String = when (reason) {
