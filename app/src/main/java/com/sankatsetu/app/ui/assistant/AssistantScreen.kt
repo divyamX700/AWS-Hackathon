@@ -1,7 +1,9 @@
 package com.sankatsetu.app.ui.assistant
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -54,9 +56,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.assistant.KnowledgeChunk
+import com.sankatsetu.app.assistant.KnowledgeImage
 import com.sankatsetu.app.assistant.SuggestedAction
 import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
 import com.sankatsetu.app.ui.theme.pressScale
@@ -283,6 +289,27 @@ private fun TurnCard(
                         )
                     }
 
+                    // Deterministic — never chosen by the model. Only the
+                    // SINGLE top-ranked retrieved source's image is shown,
+                    // not any image among the top 3 matches: a real-device
+                    // test asking "how do I put on a bandage for a wound"
+                    // showed the tourniquet photo instead of a wound-care
+                    // one, because "bandage"/"wound" also scored against
+                    // the tourniquet section (ranked #2 or #3) even though
+                    // the generated text was actually grounded in "Cleaning
+                    // Minor Wounds" (ranked #1, no image attached). Using
+                    // only sources.firstOrNull() — the strongest single
+                    // lexical match, same passage AssistantEngine's
+                    // extractive fallback would use verbatim — means a
+                    // shown image is always about the same passage the
+                    // answer is actually grounded in most strongly, never
+                    // a plausible-looking but wrong runner-up.
+                    val turnImage = remember(turn.sources) { turn.sources.firstOrNull()?.image }
+                    if (turnImage != null) {
+                        Spacer(Modifier.height(10.dp))
+                        KnowledgeImageCard(turnImage)
+                    }
+
                     if (turn.wasGenerated && turn.suggestedAction != SuggestedAction.NONE) {
                         Spacer(Modifier.height(10.dp))
                         when (turn.suggestedAction) {
@@ -305,6 +332,35 @@ private fun TurnCard(
                     }
                 }
             }
+        }
+    }
+}
+
+/**
+ * Renders one deterministically-attached [KnowledgeImage] straight from
+ * `assets/` — no network, no LLM involvement. Decoded once per [image]
+ * (keyed by its asset path) rather than on every recomposition; a missing or
+ * corrupt asset degrades to rendering nothing rather than crashing the turn.
+ */
+@Composable
+private fun KnowledgeImageCard(image: KnowledgeImage, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bitmap = remember(image.assetPath) {
+        runCatching { context.assets.open(image.assetPath).use { BitmapFactory.decodeStream(it) } }.getOrNull()
+    } ?: return
+
+    Column(modifier.fillMaxWidth()) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = image.caption,
+            modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium),
+            contentScale = ContentScale.FillWidth
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(image.caption, style = MaterialTheme.typography.bodySmall)
+        if (image.attribution.isNotBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(image.attribution, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -390,6 +446,10 @@ private fun DocsBrowser(
                             Text(chunk.section, style = MaterialTheme.typography.headlineSmall)
                             Spacer(Modifier.height(6.dp))
                             Text(chunk.text, style = MaterialTheme.typography.bodyLarge)
+                            chunk.image?.let { image ->
+                                Spacer(Modifier.height(10.dp))
+                                KnowledgeImageCard(image)
+                            }
                         }
                     }
                 }
