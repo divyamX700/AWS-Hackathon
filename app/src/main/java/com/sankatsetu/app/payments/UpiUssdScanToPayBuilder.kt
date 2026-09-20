@@ -27,7 +27,7 @@ package com.sankatsetu.app.payments
  * `PayScreen.kt` now does exactly that — this class exists only to
  * validate the VPA/amount pair before that flow proceeds, matching what
  * the confirmation dialog needs to enable its "Pay" button. See
- * docs/adr/0022-qr-scan-to-pay.md's fourth update for the full story.
+ * docs/adr/0025-qr-scan-to-pay.md's fourth update for the full story.
  */
 object UpiUssdScanToPayBuilder {
 

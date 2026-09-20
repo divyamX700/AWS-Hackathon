@@ -30,7 +30,7 @@ import android.net.Uri
  * stack with no keypad UI in between, so it isn't subject to that
  * mangling — this is *why* Flowpay's own real, shipped app uses it despite
  * the extra permission and despite giving up the dialer's own last-tap
- * step. See docs/adr/0022-qr-scan-to-pay.md's third update for the full
+ * step. See docs/adr/0025-qr-scan-to-pay.md's third update for the full
  * story, including the live test that found the `ACTION_DIAL` bug.
  */
 object UssdDialer {

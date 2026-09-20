@@ -25,7 +25,7 @@ License: Unlicense (public domain)
 
 `payments/UpiQrParser.kt` is adapted from Flowpay's
 `QRCodeParser.kt` (query-string parsing hand-rolled instead of
-`android.net.Uri` — see `docs/adr/0022-qr-scan-to-pay.md` for why).
+`android.net.Uri` — see `docs/adr/0025-qr-scan-to-pay.md` for why).
 `payments/UssdDialer.kt`'s `ACTION_DIAL`-not-`ACTION_CALL` design
 follows the same safety boundary Flowpay's own `CallManager.kt`
 documents. Both from

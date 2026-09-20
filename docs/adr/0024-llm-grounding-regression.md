@@ -5,7 +5,7 @@
 
 ## Context
 
-After `docs/adr/0020-image-grounded-answers.md`'s content-expansion pass
+After `docs/adr/0023-image-grounded-answers.md`'s content-expansion pass
 roughly doubled every knowledge-base section's length, live on-device
 testing (the connected phone, Assistant tab, real `Qwen2.5-0.5B-Instruct`
 model side-loaded and run) found a serious regression: asking three

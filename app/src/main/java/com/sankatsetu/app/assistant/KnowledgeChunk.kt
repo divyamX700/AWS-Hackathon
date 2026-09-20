@@ -16,7 +16,7 @@ package com.sankatsetu.app.assistant
  * `assets/kb/images/manifest.json` by (document, section). That keeps this
  * type, and the parser that produces it, free of any Android/image concern
  * while still letting an image ride along with retrieval deterministically.
- * See docs/adr/0020-image-grounded-answers.md.
+ * See docs/adr/0023-image-grounded-answers.md.
  */
 data class KnowledgeChunk(
     val id: String,

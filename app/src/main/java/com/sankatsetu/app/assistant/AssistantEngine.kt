@@ -78,7 +78,7 @@ private fun String.normalizeLiteralNewlines(): String = replace("\\n", "\n")
  * model reads to draft its own answer — [AssistantSource.text] (the
  * "why this answer" data and the Docs browser's full-text reading view)
  * still carries the complete, untruncated section. See
- * docs/adr/0020-image-grounded-answers.md's "Consequences" for how this was
+ * docs/adr/0023-image-grounded-answers.md's "Consequences" for how this was
  * found during the same testing pass that verified the image feature.
  */
 private const val MAX_CONTEXT_CHARS_PER_CHUNK = 500
@@ -151,7 +151,7 @@ class AssistantEngine(
             // and well within the token budget on its own. Restricting to
             // one passage is a reasonable next lever given the evidence,
             // NOT a confirmed fix — there was no device left to re-test
-            // this change live. See docs/adr/0021-llm-grounding-regression.md.
+            // this change live. See docs/adr/0024-llm-grounding-regression.md.
             val prompt = buildPrompt(query, matches.take(1).map { it.chunk }, history)
             // A real-device test tried an outer retry here for a missing
             // Action line, and found a worse bug: MediaPipeLlmAssistant's

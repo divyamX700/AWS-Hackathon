@@ -80,7 +80,7 @@ fun PayScreen(viewModel: PayViewModel) {
     // Flowpay's own real CallManager.kt mechanism exactly. No other app is
     // ever launched, unlike a typical `upi://` deep link that hands off to
     // whichever UPI app the person has installed. See
-    // docs/adr/0022-qr-scan-to-pay.md.
+    // docs/adr/0025-qr-scan-to-pay.md.
     var pendingScan by remember { mutableStateOf<UpiQrParser.ParseResult.Valid?>(null) }
     var scanErrorReason by remember { mutableStateOf<UpiQrParser.Reason?>(null) }
     var pendingUssdCode by remember { mutableStateOf<String?>(null) }
@@ -392,7 +392,7 @@ private fun IouComposer(
  * Money → To VPA, skipping those two menu taps, nothing more. The person
  * pastes the VPA and types the amount into the carrier's own live
  * interactive prompt afterward. See
- * docs/adr/0022-qr-scan-to-pay.md's fourth update for the full story.
+ * docs/adr/0025-qr-scan-to-pay.md's fourth update for the full story.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

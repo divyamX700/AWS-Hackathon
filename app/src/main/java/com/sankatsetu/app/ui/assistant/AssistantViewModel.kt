@@ -54,7 +54,7 @@ class AssistantViewModel(private val engine: AssistantEngine) : ViewModel() {
         // which came back correct every time. A wrong answer to a genuinely
         // new question is worse than losing pronoun-resolution on a rare
         // follow-up, so history is off entirely rather than half-fixed.
-        // See docs/adr/0021-llm-grounding-regression.md's update.
+        // See docs/adr/0024-llm-grounding-regression.md's update.
         _uiState.value = _uiState.value.copy(
             turns = _uiState.value.turns + turn,
             isThinking = true

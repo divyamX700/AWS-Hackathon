@@ -40,7 +40,7 @@ import org.json.JSONArray
  * LLM step here, no image classifier, just an exact-match lookup on the same
  * key the retriever already scored. An image rides along with its chunk
  * automatically whenever that chunk is retrieved. See
- * docs/adr/0020-image-grounded-answers.md.
+ * docs/adr/0023-image-grounded-answers.md.
  */
 object KnowledgeBaseLoader {
     private const val ASSET_DIR = "kb/docs"
