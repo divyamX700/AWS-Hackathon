@@ -143,7 +143,7 @@ dependencies {
     // directly, so there's nothing for a separate CameraX dependency to do
     // here. Simpler surface area to get right with no device available to
     // test a hand-rolled CameraX preview against. See
-    // docs/adr/0022-qr-scan-to-pay.md.
+    // docs/adr/0025-qr-scan-to-pay.md.
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     // --- On-device LLM assistant (Day 2, F2) ---
