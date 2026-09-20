@@ -20,6 +20,13 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- ===== Pay tab: scan-to-pay QR (Flowpay-pattern, no redirect to a
+         separate UPI app) — re-added, this time actually wired to a real
+         screen (QrScanScreen.kt); see docs/adr/0022-qr-scan-to-pay.md for
+         why this was previously removed as dead code (08b5e67) and why
+         it's back. ===== -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <!-- ===== Nostr "connectivity returns" bridge — added Day 3 =====
          Declared honestly, see docs/adr/0003-internet-permission.md for why
          this app is NOT a zero-INTERNET app like Flowpay. -->
@@ -27,6 +34,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
         android:name=".SankatSetuApplication"

@@ -1,5 +1,9 @@
 package com.sankatsetu.app.ui.pay
 
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -14,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -27,6 +32,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -39,7 +45,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import com.sankatsetu.app.data.IouEntity
+import com.sankatsetu.app.payments.UpiQrParser
+import com.sankatsetu.app.payments.UpiUssdScanToPayBuilder
 import com.sankatsetu.app.payments.UssdDialer
 import com.sankatsetu.app.ui.components.StampMark
 import com.sankatsetu.app.ui.components.StatusPill
@@ -59,6 +70,53 @@ fun PayScreen(viewModel: PayViewModel) {
     val state by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     var showComposer by remember { mutableStateOf(false) }
+
+    // Scan-to-pay state — everything from the scan to building the *99#
+    // string happens in this screen; UssdDialer.openDialer is the ONLY
+    // hand-off out of the app, and even that requires the person's own tap
+    // in the system dialer (see UssdDialer's own doc). No other app is ever
+    // launched, unlike a typical `upi://` deep link that hands off to
+    // whichever UPI app the person has installed. See
+    // docs/adr/0022-qr-scan-to-pay.md.
+    var pendingScan by remember { mutableStateOf<UpiQrParser.ParseResult.Valid?>(null) }
+    var scanErrorReason by remember { mutableStateOf<UpiQrParser.Reason?>(null) }
+
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val raw = result.contents ?: return@rememberLauncherForActivityResult // user backed out of the scanner, not an error
+        when (val parsed = UpiQrParser.parse(raw)) {
+            is UpiQrParser.ParseResult.Valid -> pendingScan = parsed
+            is UpiQrParser.ParseResult.Invalid -> scanErrorReason = parsed.reason
+        }
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) scanLauncher.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setOrientationLocked(true))
+    }
+    val launchScan = launch@{
+        if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            scanLauncher.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setBeepEnabled(false).setOrientationLocked(true))
+            return@launch
+        }
+        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+    }
+
+    pendingScan?.let { scan ->
+        ScanToPayConfirmDialog(
+            payload = scan.data,
+            onDismiss = { pendingScan = null },
+            onConfirm = { ussdCode ->
+                UssdDialer.openDialer(context, ussdCode)
+                pendingScan = null
+            }
+        )
+    }
+    scanErrorReason?.let { reason ->
+        AlertDialog(
+            onDismissRequest = { scanErrorReason = null },
+            title = { Text("Couldn't read that QR code") },
+            text = { Text(qrRejectionMessage(reason)) },
+            confirmButton = { TextButton(onClick = { scanErrorReason = null }) { Text("OK") } }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -86,6 +144,13 @@ fun PayScreen(viewModel: PayViewModel) {
         // lead the page. The mesh IOU below is real but secondary, one
         // entry type in the register, not a competing headline action.
         item { LedgerSectionHeader("Pay now") }
+        item {
+            PayActionCard(
+                title = "Scan QR to Pay",
+                subtitle = "Scan a shop's UPI QR code. Everything — reading the code, confirming the amount — happens in this app; the only hand-off is your own tap in the dialer to actually send the *99# request, never a redirect to a different payment app.",
+                onClick = launchScan
+            )
+        }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 CompactActionButton(
@@ -274,6 +339,79 @@ private fun IouComposer(
             }
         }
     }
+}
+
+/**
+ * Shown right after a successful scan, before anything is dialed. The
+ * amount is editable even when the QR fixed one (`am`) — a shopkeeper
+ * mistake or a tip shouldn't require re-scanning — but the VPA itself is
+ * never editable here: it came from the scanned code, and letting someone
+ * hand-edit a payee address in this dialog would defeat the point of
+ * scanning it in the first place.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ScanToPayConfirmDialog(
+    payload: com.sankatsetu.app.payments.UpiQrPayload,
+    onDismiss: () -> Unit,
+    onConfirm: (ussdCode: String) -> Unit
+) {
+    var amount by remember { mutableStateOf(payload.amount) }
+    val buildResult = remember(amount) { UpiUssdScanToPayBuilder.build(payload.vpa, amount) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (payload.payeeName.isNotBlank()) payload.payeeName else "Pay via UPI") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(payload.vpa, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedTextField(
+                    value = amount,
+                    onValueChange = { amount = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Amount (₹)") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (buildResult is UpiUssdScanToPayBuilder.Result.Invalid && amount.isNotBlank()) {
+                    Text(
+                        ussdRejectionMessage(buildResult.reason),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+                Text(
+                    "Opens the dialer with the request ready — you still tap call yourself.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            val result = buildResult
+            TextButton(
+                onClick = { if (result is UpiUssdScanToPayBuilder.Result.Valid) onConfirm(result.ussdCode) },
+                enabled = result is UpiUssdScanToPayBuilder.Result.Valid
+            ) { Text("Pay via *99#") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+private fun qrRejectionMessage(reason: UpiQrParser.Reason): String = when (reason) {
+    UpiQrParser.Reason.EMPTY -> "That didn't look like a QR code at all. Try scanning again."
+    UpiQrParser.Reason.NOT_A_UPI_QR -> "That's not a UPI payment QR code."
+    UpiQrParser.Reason.MALFORMED -> "That QR code's payment details couldn't be read."
+    UpiQrParser.Reason.NO_PAYEE_ADDRESS -> "That QR code doesn't have a payee to pay."
+    UpiQrParser.Reason.INVALID_PAYEE_ADDRESS -> "That QR code's payee address doesn't look valid."
+    UpiQrParser.Reason.INVALID_AMOUNT -> "That QR code's amount doesn't look valid."
+}
+
+private fun ussdRejectionMessage(reason: UpiUssdScanToPayBuilder.Reason): String = when (reason) {
+    UpiUssdScanToPayBuilder.Reason.MISSING_VPA -> "No payee address."
+    UpiUssdScanToPayBuilder.Reason.INVALID_VPA -> "Payee address doesn't look valid."
+    UpiUssdScanToPayBuilder.Reason.MISSING_AMOUNT -> "Enter an amount."
+    UpiUssdScanToPayBuilder.Reason.AMOUNT_NOT_A_NUMBER -> "Enter a valid amount."
+    UpiUssdScanToPayBuilder.Reason.AMOUNT_BELOW_MINIMUM -> "Amount must be at least ₹1."
+    UpiUssdScanToPayBuilder.Reason.AMOUNT_ABOVE_CAP -> "Amount is too large for this flow."
 }
 
 @Composable
