@@ -1,7 +1,17 @@
 # ADR 0012: Mesh IOU voucher — scope and what this app does not do
 
 ## Status
-Accepted (Day 3)
+Accepted (Day 3). **The "What this app will never do by itself" section's
+`CALL_PHONE`/`ACTION_CALL` claim is superseded as of 2026-09-20** by
+`docs/adr/0025-qr-scan-to-pay.md` — written in a parallel session without
+visibility into this ADR, then reconciled with the user's explicit
+sign-off once the conflict was found during a master merge. `UssdDialer`
+now uses `Intent.ACTION_CALL` and the app does request `CALL_PHONE`; see
+ADR 0025 for why (two real live-carrier failures showed `ACTION_DIAL`
+cannot carry a UPI VPA's letters through intact) and `handoff.md`'s
+Payments section for the current, correct statement of the boundary. The
+rest of this ADR (the IOU voucher's own scope and design) is unaffected
+and still accurate.
 
 ## Context
 

@@ -294,14 +294,20 @@ claims parity between them. See §7.
 
 ### Payments
 
-`PayScreen`'s two USSD/IVR cards open the system dialer pre-filled with
-`*99#` via `Intent.ACTION_DIAL` and stop there — the person must tap the
-call button themselves. The app never requests `CALL_PHONE` and never
-uses `Intent.ACTION_CALL`, which would dial with no further confirmation.
-This is a considered, permanent boundary (`docs/adr/0012`): this codebase
-will never initiate a real transfer or phone call against someone's
-actual bank account or SIM without a fresh, physical action from that
-specific person, hackathon deadline or not.
+**Superseded 2026-09-20 — see §7's last entry and `docs/adr/0025`.**
+`PayScreen`'s two plain USSD/IVR cards and the new Scan QR to Pay card all
+place the call via `Intent.ACTION_CALL` (`UssdDialer.kt`), which requires
+`CALL_PHONE` and places the call immediately once tapped — not
+`Intent.ACTION_DIAL`, and not the "never `CALL_PHONE`" boundary this
+paragraph used to state. That boundary (originally `docs/adr/0012`) was
+reversed with the user's explicit sign-off after two real live-carrier
+failures showed `ACTION_DIAL`'s own dial-pad UI cannot carry a UPI VPA's
+letters through intact (see `docs/adr/0025-qr-scan-to-pay.md` for the
+full diagnosis) — the person's own tap on "Pay via *99#"/"Open *99#" in
+this app's own confirmation UI is now the one deliberate action a payment
+needs, matching Flowpay's own real, shipped mechanism exactly. Treat this
+paragraph, not ADR 0012's original text, as the current statement of the
+payment safety boundary.
 
 The **mesh IOU voucher** (`IouPacket`, `IouManager`) is a cryptographically
 signed promise-to-pay (using the same ECDSA identity key chat uses),
@@ -592,6 +598,42 @@ everything described above.
   download-area viewport is the one that matters for the real use case,
   and chasing every marker would make the camera jump around
   unpredictably as new ones arrive. See §10's known gaps.
+- **A separate, parallel session (different coding environment, same
+  day) built three more things and merged them into master**: the
+  knowledge base's 21 medical/disaster docs were roughly doubled with
+  real cited content (WHO/ICRC/NDMA/CDC/FEMA — see
+  `docs/adr/0023-image-grounded-answers.md`) and given deterministic
+  image attachment (a flat `manifest.json` joins a chunk's (doc, section)
+  to a real photo or an original diagram — no LLM involvement in picking
+  or describing it); a real, precisely-diagnosed LLM bug was found and
+  fixed live (conversation history was contaminating a topic-switching
+  question's answer with facts from the prior unrelated question — this
+  ~0.5B model doesn't reliably obey "ignore history for a different
+  situation," so history is now off entirely, every question answered
+  independently — see `docs/adr/0024-llm-grounding-regression.md`); and
+  QR scan-to-pay was built, which **reverses the camera/QR removal and
+  the `CALL_PHONE`/`ACTION_DIAL` boundary documented earlier in this same
+  log and in the old ADR 0012** — after two real live-carrier failures
+  (`ACTION_DIAL`'s dial-pad UI mangles a VPA's letters via keypad
+  letter-to-digit mapping; `ACTION_CALL` alone still failed on a
+  raw VPA), tracing Flowpay's actual shipped `QRScannerActivity.kt`
+  settled it: even Flowpay doesn't embed a VPA into a dial string —
+  it copies the VPA to the clipboard and dials the bare `*99*1*3#` menu
+  shortcut via `ACTION_CALL`, requiring `CALL_PHONE`. This app now does
+  the same, with the user's explicit sign-off given the direct conflict
+  with the earlier documented boundary. See
+  `docs/adr/0025-qr-scan-to-pay.md` for the full diagnosis trail
+  (three sequential live failures, each with real carrier/device
+  evidence, not guesses) and NOTICE.md for the two things adapted from
+  Flowpay's real source under this project's existing sourcing policy.
+  ADR 0012's "never `CALL_PHONE`/`ACTION_CALL`" claim is superseded by
+  this decision — that ADR was written without visibility into this
+  parallel session's work; treat this paragraph as the current, correct
+  statement of the payment safety boundary, not ADR 0012's original text.
+  Merged into master via `feature/llm-context-fix-and-qr-payments`
+  (7 commits) after renumbering that branch's own ADR 0020-0022 (an
+  independent numbering collision with this session's offline-maps
+  ADRs) to 0023-0025.
 
 ## 8. SOS broadcast
 
