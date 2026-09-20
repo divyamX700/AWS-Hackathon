@@ -24,6 +24,19 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 
+/**
+ * How long a Noise handshake gets to complete before [ChatViewModel]
+ * retries it on the peer's next announce. Real two-phone field testing
+ * found a peer stuck in "CONNECTING" indefinitely because the single
+ * handshake attempt's reply was silently dropped at the BLE transport
+ * layer (a real `PeripheralLink` central-subscription race, not a Kotlin
+ * bug — see `MeshTransport.kt`'s own `subscribedCentrals` tracking).
+ * Peers re-announce periodically already, so 15s is generous slack past
+ * a normal handshake's round-trip time before assuming this one attempt
+ * was lost and trying again.
+ */
+private const val HANDSHAKE_RETRY_TIMEOUT_MS = 15_000L
+
 data class PeerUiModel(
     val peerIdBase64: String,
     val nickname: String,
@@ -72,6 +85,9 @@ class ChatViewModel(
 
     // One Noise session per peer we've ever started a handshake with.
     private val sessions = ConcurrentHashMap<String, NoiseSession>()
+    // When each session in [sessions] was created — see [handleAnnounce]'s
+    // stale-session retry for why this exists.
+    private val sessionStartedAt = ConcurrentHashMap<String, Long>()
     private val knownNicknames = ConcurrentHashMap<String, String>()
     private val knownHopCounts = ConcurrentHashMap<String, Int>()
 
@@ -228,10 +244,25 @@ class ChatViewModel(
         // every hop up to the mesh's TTL budget exactly like ANNOUNCE and
         // MESSAGE do (see that function's own "no source-routing table yet"
         // doc) — the transport already supports this, this call site was the
-        // only place still gating on hop count. sessions[peerIdB64] == null
-        // still bounds this to one handshake attempt per peer for the
-        // process's lifetime, same as before.
-        if (sessions[peerIdB64] == null) {
+        // only place still gating on hop count.
+        //
+        // Retries a STALE session, not just a missing one — a real two-phone
+        // field test found a peer stuck showing "CONNECTING" indefinitely:
+        // MeshTransport's own logs showed the handshake reply being dropped
+        // ("PeripheralLink.send(): ... not subscribed, dropping N bytes"),
+        // a real BLE central/peripheral subscription race, not a Kotlin bug.
+        // Before this fix, `sessions[peerIdB64] == null` bounded the app to
+        // exactly one handshake attempt for the entire process's lifetime —
+        // if that single attempt's packets were lost at the transport layer
+        // (proven above to actually happen), the peer was stuck forever with
+        // no recovery short of forgetting the peer or restarting the app.
+        // Peers already re-announce periodically (that's how liveness is
+        // maintained at all), so re-checking staleness here needs no new
+        // timer — it rides the existing announce cadence for free.
+        val existingSession = sessions[peerIdB64]
+        val isStale = existingSession != null && !existingSession.isEstablished &&
+            (now - (sessionStartedAt[peerIdB64] ?: now)) > HANDSHAKE_RETRY_TIMEOUT_MS
+        if (existingSession == null || isStale) {
             startHandshake(peerIdB64, packet.senderId, isInitiator = isLexicographicInitiator(packet.senderId))
         }
     }
@@ -249,6 +280,7 @@ class ChatViewModel(
     private suspend fun startHandshake(peerIdB64: String, remotePeerId: ByteArray, isInitiator: Boolean) {
         val session = NoiseSession(identity.noisePrivateKey, identity.noisePublicKey, isInitiator)
         sessions[peerIdB64] = session
+        sessionStartedAt[peerIdB64] = System.currentTimeMillis()
         if (isInitiator) {
             session.nextHandshakeMessage()?.let { msg ->
                 router.sendDirected(MessageType.NOISE_HANDSHAKE, remotePeerId, msg)
@@ -260,7 +292,10 @@ class ChatViewModel(
         val peerIdB64 = Base64.encodeToString(packet.senderId, Base64.NO_WRAP)
         val session = sessions[peerIdB64]
             ?: NoiseSession(identity.noisePrivateKey, identity.noisePublicKey, isInitiator = false)
-                .also { sessions[peerIdB64] = it }
+                .also {
+                    sessions[peerIdB64] = it
+                    sessionStartedAt[peerIdB64] = System.currentTimeMillis()
+                }
 
         session.consumeHandshakeMessage(packet.payload)
         session.nextHandshakeMessage()?.let { reply ->
@@ -391,6 +426,7 @@ class ChatViewModel(
         viewModelScope.launch {
             peerDao.delete(peerIdBase64)
             sessions.remove(peerIdBase64)
+            sessionStartedAt.remove(peerIdBase64)
             knownNicknames.remove(peerIdBase64)
             knownHopCounts.remove(peerIdBase64)
         }
