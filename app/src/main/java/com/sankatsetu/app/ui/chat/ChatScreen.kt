@@ -67,6 +67,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.LinearEasing
@@ -763,6 +764,7 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
     val messages by viewModel.threadMessages(peer.peerIdBase64).collectAsState(initial = emptyList())
     var draft by remember { mutableStateOf("") }
     var showClearConfirm by remember { mutableStateOf(false) }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     LaunchedEffect(peer.peerIdBase64) { viewModel.onThreadOpened(peer.peerIdBase64) }
 
@@ -831,6 +833,7 @@ fun ChatThreadScreen(viewModel: ChatViewModel, peer: PeerUiModel, onBack: () -> 
                         if (draft.isNotBlank()) {
                             viewModel.sendMessage(peer.peerIdBase64, draft.trim())
                             draft = ""
+                            keyboardController?.hide()
                         }
                     },
                     interactionSource = sendInteraction,
