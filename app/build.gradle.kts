@@ -132,6 +132,20 @@ dependencies {
     // and docs/adr/0002-vendoring-and-porting-strategy.md.
     implementation("com.github.rweather:noise-java:master-SNAPSHOT")
 
+    // --- QR scan-to-pay (Pay tab) ---
+    // Re-added after being removed as dead code in 08b5e67 ("a whole 'QR
+    // setup handshake' dependency block... never actually used anywhere in
+    // the app's code") — this time it IS used, by QrScanScreen.kt, wired
+    // into a real PayScreen entry point. Only zxing-android-embedded, not
+    // the CameraX artifacts the removed block also had: this integration
+    // uses the library's own bundled ScanContract/CaptureActivity (its own
+    // Camera1/Camera2 handling internally), never touching CameraX's API
+    // directly, so there's nothing for a separate CameraX dependency to do
+    // here. Simpler surface area to get right with no device available to
+    // test a hand-rolled CameraX preview against. See
+    // docs/adr/0025-qr-scan-to-pay.md.
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+
     // --- On-device LLM assistant (Day 2, F2) ---
     // The model file itself is never bundled — see
     // docs/adr/0005-model-assets-not-committed.md — this is just the

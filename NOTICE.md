@@ -23,10 +23,14 @@ License: Unlicense (public domain)
 
 ## Flowpay (Payments-Without-Internet)
 
-The payment module (`*99#` USSD dialing, UPI 123Pay IVR DTMF construction,
-bank SMS confirmation parsing) is imported from
+`payments/UpiQrParser.kt` is adapted from Flowpay's
+`QRCodeParser.kt` (query-string parsing hand-rolled instead of
+`android.net.Uri` — see `docs/adr/0025-qr-scan-to-pay.md` for why).
+`payments/UssdDialer.kt`'s `ACTION_DIAL`-not-`ACTION_CALL` design
+follows the same safety boundary Flowpay's own `CallManager.kt`
+documents. Both from
 [Flowpayup/Payments-Without-Internet](https://github.com/Flowpayup/Payments-Without-Internet),
-licensed Apache 2.0. Landing Day 3 per `docs/PLAN.md`.
+licensed Apache 2.0.
 
 Source: https://github.com/Flowpayup/Payments-Without-Internet
 License: Apache License 2.0

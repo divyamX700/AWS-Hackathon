@@ -1,7 +1,9 @@
 package com.sankatsetu.app.ui.assistant
 
+import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -20,8 +22,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -39,10 +39,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Payments
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,10 +52,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.assistant.KnowledgeChunk
-import com.sankatsetu.app.assistant.SuggestedAction
+import com.sankatsetu.app.assistant.KnowledgeImage
 import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
 import com.sankatsetu.app.ui.theme.pressScale
 import com.sankatsetu.app.ui.theme.rememberShimmerProgress
@@ -283,28 +284,74 @@ private fun TurnCard(
                         )
                     }
 
-                    if (turn.wasGenerated && turn.suggestedAction != SuggestedAction.NONE) {
+                    // Deterministic — never chosen by the model. Only the
+                    // SINGLE top-ranked retrieved source's image is shown,
+                    // not any image among the top 3 matches: a real-device
+                    // test asking "how do I put on a bandage for a wound"
+                    // showed the tourniquet photo instead of a wound-care
+                    // one, because "bandage"/"wound" also scored against
+                    // the tourniquet section (ranked #2 or #3) even though
+                    // the generated text was actually grounded in "Cleaning
+                    // Minor Wounds" (ranked #1, no image attached). Using
+                    // only sources.firstOrNull() — the strongest single
+                    // lexical match, same passage AssistantEngine's
+                    // extractive fallback would use verbatim — means a
+                    // shown image is always about the same passage the
+                    // answer is actually grounded in most strongly, never
+                    // a plausible-looking but wrong runner-up.
+                    val turnImage = remember(turn.sources) { turn.sources.firstOrNull()?.image }
+                    if (turnImage != null) {
                         Spacer(Modifier.height(10.dp))
-                        when (turn.suggestedAction) {
-                            SuggestedAction.BROADCAST_SAFE -> AssistChip(
-                                onClick = onBroadcastSafe,
-                                label = { Text("Broadcast \"I'm safe\" now") },
-                                leadingIcon = { Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                shape = MaterialTheme.shapes.small,
-                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-                            )
-                            SuggestedAction.OPEN_PAY -> AssistChip(
-                                onClick = onOpenPay,
-                                label = { Text("Open Pay tab") },
-                                leadingIcon = { Icon(Icons.Filled.Payments, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                shape = MaterialTheme.shapes.small,
-                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-                            )
-                            SuggestedAction.NONE -> Unit
-                        }
+                        KnowledgeImageCard(turnImage)
                     }
+
+                    // The suggested-action chip (Broadcast "I'm safe" /
+                    // Open Pay tab) is intentionally never rendered, even
+                    // though AssistantEngine still parses an Action line
+                    // out of the model's own output — a real-device test
+                    // found this ~0.5B model does not reliably follow the
+                    // prompt's "BROADCAST_SAFE only if the danger already
+                    // passed" instruction, the same class of unreliable
+                    // self-classification documented for conversation
+                    // history in AssistantViewModel.ask()'s doc. It showed
+                    // up on unrelated first-aid questions ("how to stop
+                    // massive bleeding") where it was actively wrong, not
+                    // just unhelpful. turn.suggestedAction is left in the
+                    // data model rather than removed, since AssistantEngine
+                    // parsing it out of the visible answer text is still
+                    // correct and necessary regardless of whether the UI
+                    // acts on it.
                 }
             }
+        }
+    }
+}
+
+/**
+ * Renders one deterministically-attached [KnowledgeImage] straight from
+ * `assets/` — no network, no LLM involvement. Decoded once per [image]
+ * (keyed by its asset path) rather than on every recomposition; a missing or
+ * corrupt asset degrades to rendering nothing rather than crashing the turn.
+ */
+@Composable
+private fun KnowledgeImageCard(image: KnowledgeImage, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val bitmap = remember(image.assetPath) {
+        runCatching { context.assets.open(image.assetPath).use { BitmapFactory.decodeStream(it) } }.getOrNull()
+    } ?: return
+
+    Column(modifier.fillMaxWidth()) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = image.caption,
+            modifier = Modifier.fillMaxWidth().clip(MaterialTheme.shapes.medium),
+            contentScale = ContentScale.FillWidth
+        )
+        Spacer(Modifier.height(6.dp))
+        Text(image.caption, style = MaterialTheme.typography.bodySmall)
+        if (image.attribution.isNotBlank()) {
+            Spacer(Modifier.height(2.dp))
+            Text(image.attribution, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -390,6 +437,10 @@ private fun DocsBrowser(
                             Text(chunk.section, style = MaterialTheme.typography.headlineSmall)
                             Spacer(Modifier.height(6.dp))
                             Text(chunk.text, style = MaterialTheme.typography.bodyLarge)
+                            chunk.image?.let { image ->
+                                Spacer(Modifier.height(10.dp))
+                                KnowledgeImageCard(image)
+                            }
                         }
                     }
                 }

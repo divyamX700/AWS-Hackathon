@@ -20,6 +20,19 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- ===== Pay tab: scan-to-pay QR (Flowpay-pattern, no redirect to a
+         separate UPI app) — re-added, this time actually wired to a real
+         screen; see docs/adr/0022-qr-scan-to-pay.md for why this was
+         previously removed as dead code (08b5e67) and why it's back.
+         CALL_PHONE is for UssdDialer's Intent.ACTION_CALL — needed because
+         ACTION_DIAL's own dial-pad UI was found live to mangle a VPA's
+         letters/@ via keypad letter-to-digit mapping before a payment
+         request ever reached the network; ACTION_CALL hands the string
+         straight to the telephony stack instead, matching Flowpay's own
+         real mechanism (CallManager.kt) exactly. ===== -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.CALL_PHONE" />
+
     <!-- ===== Nostr "connectivity returns" bridge — added Day 3 =====
          Declared honestly, see docs/adr/0003-internet-permission.md for why
          this app is NOT a zero-INTERNET app like Flowpay. -->
@@ -27,6 +40,8 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
 
     <application
         android:name=".SankatSetuApplication"
@@ -39,7 +54,8 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
