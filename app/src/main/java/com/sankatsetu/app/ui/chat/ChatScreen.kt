@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -94,7 +95,7 @@ import kotlinx.coroutines.launch
 /** Peer list — the mesh's front door. Tap a peer to open [ChatThreadScreen], long-press to forget a stale one. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenThread: (PeerUiModel) -> Unit) {
+fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenThread: (PeerUiModel) -> Unit, onViewSosOnMap: (String) -> Unit) {
     val state by viewModel.uiState.collectAsState()
     val sosState by sosViewModel.uiState.collectAsState()
     var peerToForget by remember { mutableStateOf<PeerUiModel?>(null) }
@@ -221,14 +222,14 @@ fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenT
                     // scrolling through an ever-growing list to reach chat.
                     if (sosState.alerts.size <= SOS_LOG_INLINE_LIMIT) {
                         itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
-                            SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) })
+                            SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) }, onViewOnMap = { onViewSosOnMap(alert.sosId) })
                         }
                     } else {
                         item {
                             Box(Modifier.heightIn(max = SOS_LOG_ROW_HEIGHT * SOS_LOG_INLINE_LIMIT)) {
                                 LazyColumn {
                                     itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
-                                        SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) })
+                                        SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) }, onViewOnMap = { onViewSosOnMap(alert.sosId) })
                                     }
                                 }
                             }
@@ -344,7 +345,7 @@ private fun SosReportSection(onSend: (SosCategory) -> Unit, modifier: Modifier =
         AnimatedVisibility(visible = expanded, enter = fadeIn(), exit = fadeOut()) {
             Column(Modifier.padding(top = 8.dp)) {
                 Text(
-                    "Reaches every phone in range, not just known peers. No location is sent, only how many hops away. Hold a category to send.",
+                    "Reaches every phone in range, not just known peers. Sends your GPS location if a quick fix is available (never waits more than a few seconds for one). Hold a category to send.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp)
@@ -463,9 +464,11 @@ private const val SOS_LOG_INLINE_LIMIT = 2
  * unacknowledged an hour later shouldn't still be flashing.
  */
 @Composable
-private fun SosLogRow(alert: SosEntity, showDivider: Boolean, onAcknowledge: () -> Unit, consumeAttentionPulse: () -> Boolean) {
+private fun SosLogRow(alert: SosEntity, showDivider: Boolean, onAcknowledge: () -> Unit, consumeAttentionPulse: () -> Boolean, onViewOnMap: () -> Unit) {
     val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
     val isNewIncoming = !alert.isOutgoing && !alert.acknowledged
+    val lat = alert.latitude
+    val lon = alert.longitude
 
     var pulseOn by remember { mutableStateOf(false) }
     LaunchedEffect(alert.sosId, isNewIncoming) {
@@ -504,11 +507,29 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean, onAcknowledge: () 
                     if (alert.isOutgoing) "You reported: $category" else "${alert.senderNickname}: $category",
                     style = MaterialTheme.typography.bodyMedium
                 )
-                Text(
-                    if (alert.isOutgoing) "Sent to everyone in range" else if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed",
-                    style = ConsoleReadoutStyle,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        // A real fix isn't guaranteed (SosManager only waits
+                        // a few seconds before sending regardless — see its
+                        // own doc) -- falling back to the old hop-count line
+                        // when there's no location is more honest than
+                        // showing nothing.
+                        if (lat != null && lon != null) formatCoordinates(lat, lon)
+                        else if (alert.isOutgoing) "Sent to everyone in range" else if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed",
+                        style = ConsoleReadoutStyle,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (lat != null && lon != null) {
+                        IconButton(onClick = onViewOnMap, modifier = Modifier.size(22.dp).padding(start = 2.dp)) {
+                            Icon(
+                                Icons.Filled.Map,
+                                contentDescription = "View on map",
+                                tint = SankatSetuColors.SignalBlue,
+                                modifier = Modifier.size(14.dp)
+                            )
+                        }
+                    }
+                }
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
@@ -526,6 +547,13 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean, onAcknowledge: () 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(start = 26.dp))
         }
     }
+}
+
+/** 4 decimal places is ~11m precision at the equator -- enough to place someone on a street, not their exact doorstep, and matches the precision GeoMath's own bounding-box math already works at. */
+private fun formatCoordinates(lat: Double, lon: Double): String {
+    val latHemisphere = if (lat >= 0) "N" else "S"
+    val lonHemisphere = if (lon >= 0) "E" else "W"
+    return "%.4f°%s, %.4f°%s".format(kotlin.math.abs(lat), latHemisphere, kotlin.math.abs(lon), lonHemisphere)
 }
 
 /**

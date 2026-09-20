@@ -28,8 +28,8 @@ interface PeerDao {
      * name again. Now the database is the same source of truth the live
      * map already was.
      */
-    @Query("UPDATE peers SET lastSeen = :timestamp, lastKnownHopCount = :hopCount, nickname = :nickname WHERE peerIdBase64 = :peerIdBase64")
-    suspend fun touch(peerIdBase64: String, timestamp: Long, hopCount: Int, nickname: String)
+    @Query("UPDATE peers SET lastSeen = :timestamp, lastKnownHopCount = :hopCount, nickname = :nickname, latitude = :latitude, longitude = :longitude WHERE peerIdBase64 = :peerIdBase64")
+    suspend fun touch(peerIdBase64: String, timestamp: Long, hopCount: Int, nickname: String, latitude: Double?, longitude: Double?)
 
     /**
      * Forgets a peer record — the mesh has no concept of "delete this

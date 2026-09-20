@@ -51,14 +51,36 @@ class LocationProvider(private val context: Context) {
 
         cachedFix(locationManager)?.let { return it }
 
-        val provider = when {
-            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
-            locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
-            else -> return LocationResult.NoProviderAvailable
-        }
+        // Real bug found by the user's own phone: raw GPS_PROVIDER alone
+        // can take 30+ seconds for its first fix of a session (worse
+        // indoors, worse still with no network for A-GPS assistance data),
+        // even though the phone's own Maps app looks "instant" -- that's
+        // because it blends in NETWORK_PROVIDER (WiFi/cell-tower) fixes,
+        // which resolve in a couple seconds. Racing both stock
+        // LocationManager providers (no Play Services / fused location
+        // needed for this) and taking whichever answers first gets the
+        // same practical speed honestly.
+        val providers = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+            .filter { locationManager.isProviderEnabled(it) }
+        if (providers.isEmpty()) return LocationResult.NoProviderAvailable
 
-        val fix = withTimeoutOrNull(timeoutMs) { awaitFreshFix(locationManager, provider) }
+        val fix = withTimeoutOrNull(timeoutMs) { awaitFreshFix(locationManager, providers) }
         return fix ?: LocationResult.TimedOut
+    }
+
+    /**
+     * A cached fix if one exists, with no GPS/network request at all —
+     * synchronous and near-instant. Used for tagging an [AnnouncementPacket]
+     * (see ChatViewModel.sendAnnounce), which fires every 4-30s and can
+     * never afford to wait on [getCurrentFix]'s own live-fix path. Returns
+     * null (not an error state) whenever nothing recent is cached; a peer
+     * with no cached fix simply doesn't show a location to others yet.
+     */
+    fun cachedFixOrNull(): LocationResult.Fix? {
+        val hasPermission = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!hasPermission) return null
+        val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return null
+        return cachedFix(locationManager)
     }
 
     @RequiresPermission(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -72,15 +94,20 @@ class LocationProvider(private val context: Context) {
     }
 
     @RequiresPermission(Manifest.permission.ACCESS_FINE_LOCATION)
-    private suspend fun awaitFreshFix(locationManager: LocationManager, provider: String): LocationResult.Fix =
+    private suspend fun awaitFreshFix(locationManager: LocationManager, providers: List<String>): LocationResult.Fix =
         suspendCancellableCoroutine { cont ->
-            val listener = object : LocationListener {
-                override fun onLocationChanged(location: Location) {
-                    locationManager.removeUpdates(this)
-                    if (cont.isActive) cont.resume(LocationResult.Fix(location.latitude, location.longitude)) {}
+            val listeners = mutableListOf<Pair<String, LocationListener>>()
+            fun stopAll() = listeners.forEach { (_, listener) -> locationManager.removeUpdates(listener) }
+            providers.forEach { provider ->
+                val listener = object : LocationListener {
+                    override fun onLocationChanged(location: Location) {
+                        if (cont.isActive) cont.resume(LocationResult.Fix(location.latitude, location.longitude)) {}
+                        stopAll()
+                    }
                 }
+                listeners += provider to listener
+                locationManager.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper())
             }
-            locationManager.requestLocationUpdates(provider, 0L, 0f, listener, Looper.getMainLooper())
-            cont.invokeOnCancellation { locationManager.removeUpdates(listener) }
+            cont.invokeOnCancellation { stopAll() }
         }
 }

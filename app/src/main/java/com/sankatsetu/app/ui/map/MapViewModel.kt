@@ -2,12 +2,17 @@ package com.sankatsetu.app.ui.map
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.sankatsetu.app.data.PeerDao
 import com.sankatsetu.app.maps.DownloadedArea
 import com.sankatsetu.app.maps.LocationProvider
 import com.sankatsetu.app.maps.LocationResult
 import com.sankatsetu.app.maps.MapAreaStore
+import com.sankatsetu.app.mesh.emergency.SosManager
+import com.sankatsetu.app.mesh.protocol.SosCategory
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 sealed class MapUiState {
@@ -18,6 +23,24 @@ sealed class MapUiState {
     data class Ready(val area: DownloadedArea) : MapUiState()
     data class Error(val message: String) : MapUiState()
 }
+
+/** One SOS alert with a real location fix attached — see docs/adr/0021-sos-location.md. Alerts with no fix (SosEntity.latitude/longitude null) never appear here; there's nowhere honest to put them on a map. */
+data class SosMapMarker(
+    val sosId: String,
+    val latitude: Double,
+    val longitude: Double,
+    val category: SosCategory,
+    val senderNickname: String,
+    val isOutgoing: Boolean
+)
+
+/** A direct (1-hop) peer with a location their last announce carried — see docs/adr/0022-peer-location.md. A peer more than 1 hop away, or one with no cached fix on their end, never appears here. */
+data class PeerMapMarker(
+    val peerIdBase64: String,
+    val latitude: Double,
+    val longitude: Double,
+    val nickname: String
+)
 
 /**
  * Backs the Map tab — see `docs/adr/0020-offline-maps.md` (once written).
@@ -30,10 +53,51 @@ sealed class MapUiState {
  */
 class MapViewModel(
     private val locationProvider: LocationProvider,
-    private val mapAreaStore: MapAreaStore
+    private val mapAreaStore: MapAreaStore,
+    sosManager: SosManager,
+    peerDao: PeerDao
 ) : ViewModel() {
     private val _uiState = MutableStateFlow<MapUiState>(MapUiState.Idle)
     val uiState: StateFlow<MapUiState> = _uiState
+
+    /** Every SOS alert that carries a real location fix, for the "all SOS marked" view opened from an emergency-log card's map button. */
+    val sosMarkers: StateFlow<List<SosMapMarker>> = sosManager.observeAll()
+        .map { alerts ->
+            alerts.mapNotNull { alert ->
+                val lat = alert.latitude
+                val lon = alert.longitude
+                if (lat == null || lon == null) return@mapNotNull null
+                val category = SosCategory.entries.find { it.name == alert.category } ?: return@mapNotNull null
+                SosMapMarker(alert.sosId, lat, lon, category, alert.senderNickname, alert.isOutgoing)
+            }
+        }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList())
+
+    /**
+     * Direct (1-hop) peers with a location on file — deliberately excludes
+     * anyone further away: a relayed hop count is real (see PRODUCT.md's
+     * Product Principle 4) and a multi-hop peer's *last known* position
+     * could be stale by an unknown, unbounded amount by the time it's
+     * relayed to us, unlike a 1-hop peer's own fresh announce.
+     */
+    val peerMarkers: StateFlow<List<PeerMapMarker>> = peerDao.observeAll()
+        .map { peers ->
+            peers.mapNotNull { peer ->
+                val lat = peer.latitude
+                val lon = peer.longitude
+                if (lat == null || lon == null || peer.lastKnownHopCount > 1) return@mapNotNull null
+                PeerMapMarker(peer.peerIdBase64, lat, lon, peer.nickname)
+            }
+        }
+        .stateIn(viewModelScope, kotlinx.coroutines.flow.SharingStarted.Eagerly, emptyList())
+
+    /** Set when the Map tab is opened from a specific emergency-log card's "View on map" button — see MainActivity's onOpenMapForSos. */
+    private val _highlightedSosId = MutableStateFlow<String?>(null)
+    val highlightedSosId: StateFlow<String?> = _highlightedSosId
+
+    fun highlightSos(sosId: String) {
+        _highlightedSosId.value = sosId
+    }
 
     init {
         mapAreaStore.get()?.let { _uiState.value = MapUiState.Ready(it) }

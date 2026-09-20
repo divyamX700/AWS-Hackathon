@@ -35,10 +35,18 @@ enum class SosCategory(val wireValue: Byte, val label: String) {
 data class SosPacket(
     val sosId: String = UUID.randomUUID().toString(),
     val category: SosCategory,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    // Nullable, not required: [com.sankatsetu.app.mesh.emergency.SosManager]
+    // only waits a few seconds for a GPS/network fix before broadcasting
+    // regardless, since blocking an emergency send on a slow or unavailable
+    // location would be worse than sending without one. Both TLVs are
+    // written together or not at all -- there's no real case for one
+    // without the other.
+    val latitude: Double? = null,
+    val longitude: Double? = null
 ) {
     private enum class Tlv(val id: Byte) {
-        SOS_ID(0x00), CATEGORY(0x01), CREATED_AT(0x02)
+        SOS_ID(0x00), CATEGORY(0x01), CREATED_AT(0x02), LATITUDE(0x03), LONGITUDE(0x04)
     }
 
     fun encode(): ByteArray? {
@@ -49,6 +57,10 @@ data class SosPacket(
         out.write(Tlv.SOS_ID.id.toInt()); out.write(idBytes.size); out.write(idBytes)
         out.write(Tlv.CATEGORY.id.toInt()); out.write(1); out.write(category.wireValue.toInt())
         out.write(Tlv.CREATED_AT.id.toInt()); out.write(8); writeLong(out, createdAt)
+        if (latitude != null && longitude != null) {
+            out.write(Tlv.LATITUDE.id.toInt()); out.write(8); writeLong(out, latitude.toRawBits())
+            out.write(Tlv.LONGITUDE.id.toInt()); out.write(8); writeLong(out, longitude.toRawBits())
+        }
         return out.toByteArray()
     }
 
@@ -68,6 +80,8 @@ data class SosPacket(
             var sosId: String? = null
             var category: SosCategory? = null
             var createdAt: Long? = null
+            var latitude: Double? = null
+            var longitude: Double? = null
 
             while (offset + 2 <= data.size) {
                 val type = data[offset]; offset += 1
@@ -80,11 +94,13 @@ data class SosPacket(
                     Tlv.SOS_ID.id -> sosId = String(value, Charsets.UTF_8)
                     Tlv.CATEGORY.id -> { if (length == 1) category = SosCategory.fromWire(value[0]) }
                     Tlv.CREATED_AT.id -> { if (length == 8) createdAt = readLong(value) }
+                    Tlv.LATITUDE.id -> { if (length == 8) latitude = Double.fromBits(readLong(value)) }
+                    Tlv.LONGITUDE.id -> { if (length == 8) longitude = Double.fromBits(readLong(value)) }
                     else -> return null
                 }
             }
             if (sosId == null || category == null || createdAt == null) return null
-            return SosPacket(sosId, category, createdAt)
+            return SosPacket(sosId, category, createdAt, latitude, longitude)
         }
     }
 }

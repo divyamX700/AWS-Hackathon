@@ -84,7 +84,9 @@ tested; two-phone multi-hop mesh not yet field-tested, see
   relaying it can still read it. The counterpart to "I'm Safe," built
   2026-09-20; see `docs/TODO.md` for the reasoning and honest gaps (a real
   two-phone delivery of this is untested, same limitation as the rest of
-  the mesh).
+  the mesh). Carries a real GPS fix when one's available within 5 seconds
+  (never blocks the send waiting longer than that) — see
+  `docs/adr/0021-sos-location.md`.
 - Offline maps (new 4th section, built 2026-09-20): download roughly a
   2km-radius map once, while online, then pan/zoom it with zero
   connectivity afterward — verified on real hardware with Wi-Fi and
@@ -92,7 +94,10 @@ tested; two-phone multi-hop mesh not yet field-tested, see
   location (a one-time GPS fix to center the download), not just a
   declared permission. See `docs/adr/0020-offline-maps.md` for the real
   bugs this pass found and fixed, and the honest gaps (single-area cache
-  only, no SOS/location integration yet).
+  only). The same map also shows every SOS report and every direct
+  (1-hop) peer with a location on file, as standardized pins — see
+  `docs/adr/0022-peer-location.md`, including why this is explicitly
+  demo-driven and the privacy trade-off that comes with it.
 
 Not built / aspirational only (present in the original PRD, out of current
 scope): Cedar-authorized channels, Nostr internet-bridge for reaching

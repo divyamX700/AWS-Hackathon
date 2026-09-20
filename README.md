@@ -57,9 +57,11 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
   completed handshake. Press-and-hold to send, a pulsing log-row
   animation plus a small nav-icon tag to receive (not a blocking
   dialog — an earlier version was, direct user feedback replaced it).
-  See `docs/TODO.md` for the full reasoning and honest gaps (a real
-  two-phone delivery of this is untested, same limitation as the rest of
-  the mesh).
+  Carries a real GPS fix when one's available in time (never blocks the
+  send past 5 seconds waiting for one — see `docs/adr/0021`), shown on
+  the card and viewable on the Map tab. See `docs/TODO.md` for the full
+  reasoning and honest gaps (a real two-phone delivery of this is
+  untested, same limitation as the rest of the mesh).
 - **Offline maps** (new 4th section, `docs/adr/0020`): download roughly
   a 2km radius around you once, while online, then pan/zoom it with zero
   connectivity afterward — verified with Wi-Fi and mobile data both
@@ -69,7 +71,9 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
   one-time GPS fix), and its first real internet dependency (a MapTiler
   API key, since the public OSM tile server explicitly refuses bulk
   offline downloads — see the ADR for the on-device `TileSourcePolicyException`
-  this found).
+  this found). The same map also shows every SOS report and every direct
+  (1-hop) peer that has a location on file, as standardized color-coded
+  pins with the person's name — see `docs/adr/0022`.
 
 Not yet built: courier envelopes (relaying via a third party's phone),
 Nostr bridge, gateway coordinator, an SOS acknowledgment reply. Cedar

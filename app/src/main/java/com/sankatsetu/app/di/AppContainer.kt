@@ -93,20 +93,23 @@ class AppContainer(context: Context) {
         scope = appScope
     )
 
+    // Offline maps (Day 4) — see docs/adr/0020-offline-maps.md. Neither of
+    // these touches Room/SQLCipher: a GPS fix isn't persisted data, and the
+    // downloaded-area record is small, non-sensitive metadata, same tier as
+    // NicknameStore's own SharedPreferences use. Declared before
+    // [sosManager] since SOS location tagging (docs/adr/0021) reuses this
+    // same provider rather than each feature keeping its own.
+    val locationProvider: LocationProvider = LocationProvider(context)
+    val mapAreaStore: MapAreaStore = MapAreaStore(context)
+
     val sosManager: SosManager = SosManager(
         identity = identity,
         router = messageRouter,
         peerDao = database.peerDao(),
         sosDao = database.sosDao(),
+        locationProvider = locationProvider,
         scope = appScope
     )
-
-    // Offline maps (Day 4) — see docs/adr/0020-offline-maps.md (once
-    // written). Neither of these touches Room/SQLCipher: a GPS fix isn't
-    // persisted data, and the downloaded-area record is small, non-sensitive
-    // metadata, same tier as NicknameStore's own SharedPreferences use.
-    val locationProvider: LocationProvider = LocationProvider(context)
-    val mapAreaStore: MapAreaStore = MapAreaStore(context)
 
     // The real, live Bluetooth radio state — not to be confused with
     // MessageRouter's connected-link count, which only exists once a BLE

@@ -127,7 +127,8 @@ class MainActivity : ComponentActivity() {
                         peerDao = app.container.database.peerDao(),
                         messageDao = app.container.database.messageDao(),
                         nicknameStore = app.container.nicknameStore,
-                        bluetoothState = app.container.bluetoothOn
+                        bluetoothState = app.container.bluetoothOn,
+                        locationProvider = app.container.locationProvider
                     ) as T
                 }
             }
@@ -173,7 +174,9 @@ class MainActivity : ComponentActivity() {
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
                     return MapViewModel(
                         locationProvider = app.container.locationProvider,
-                        mapAreaStore = app.container.mapAreaStore
+                        mapAreaStore = app.container.mapAreaStore,
+                        sosManager = app.container.sosManager,
+                        peerDao = app.container.database.peerDao()
                     ) as T
                 }
             }
@@ -266,7 +269,15 @@ class MainActivity : ComponentActivity() {
                                     Tab.CHAT -> {
                                         val thread = openThreadPeerId?.let { id -> chatState.peers.find { it.peerIdBase64 == id } }
                                         if (thread == null) {
-                                            ChatListScreen(viewModel = chatViewModel, sosViewModel = sosViewModel, onOpenThread = { openThreadPeerId = it.peerIdBase64 })
+                                            ChatListScreen(
+                                                viewModel = chatViewModel,
+                                                sosViewModel = sosViewModel,
+                                                onOpenThread = { openThreadPeerId = it.peerIdBase64 },
+                                                onViewSosOnMap = { sosId ->
+                                                    mapViewModel.highlightSos(sosId)
+                                                    currentTab = Tab.MAP
+                                                }
+                                            )
                                         } else {
                                             ChatThreadScreen(viewModel = chatViewModel, peer = thread, onBack = { openThreadPeerId = null })
                                         }

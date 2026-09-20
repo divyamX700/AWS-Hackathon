@@ -138,6 +138,18 @@ prior passes — a demo phone shows this app's own palette.
   was introduced for this section — it reads as another register in the
   same ledger, not a distinct world of its own, since a map is
   functional chrome here, not a moment that needs its own visual voice.
+- **Map pin system** (`MapScreen.kt`'s `pinDrawable`, added 2026-09-20
+  for SOS/peer location, see `docs/adr/0022`): one hand-drawn teardrop
+  pin shape shared by every marker on the map, distinguished only by
+  color and size — blue for your own downloaded area, `StatusSafe`
+  green for a 1-hop peer, `StatusCritical` red for an SOS report, and a
+  one-off amber (deliberately outside the app's normal palette, so
+  nothing else on this screen is ever mistaken for it) at a larger size
+  for the specific SOS report a user tapped through to. Each pin's name
+  is drawn directly into the same bitmap on a small dark pill above the
+  pin head, not left to a tap-to-open info bubble — consistent with this
+  app's general preference for information that's visible by default
+  over information that requires a discovery gesture.
 
 ## Known gaps (honest, not fixed this pass)
 
