@@ -295,27 +295,9 @@ fun MapScreen(viewModel: MapViewModel) {
                 // after that layout pass instead of racing it.
                 view.post {
                     val target = highlightedPosition
-                    // Real bug found by testing this with a peer placed
-                    // genuinely far away: the camera used to fit ONLY the
-                    // downloaded area's own fixed 2km box, so a peer or SOS
-                    // outside that box was added to the map correctly but
-                    // sat off-screen with nothing wrong to see -- looked
-                    // exactly like "peers aren't showing" even though they
-                    // were. Fitting every marker actually on screen fixes
-                    // that; the fixed 2km box is only the fallback once
-                    // nothing else is around to frame against.
-                    val otherPoints = peerMarkers.map { GeoPoint(it.latitude, it.longitude) } +
-                        sosMarkers.map { GeoPoint(it.latitude, it.longitude) }
                     if (target != null) {
                         view.controller.setZoom(17.0)
                         view.controller.setCenter(target)
-                    } else if (otherPoints.isNotEmpty() && readyArea != null) {
-                        val allPoints = otherPoints + GeoPoint(readyArea.centerLat, readyArea.centerLon)
-                        val box = BoundingBox(
-                            allPoints.maxOf { it.latitude }, allPoints.maxOf { it.longitude },
-                            allPoints.minOf { it.latitude }, allPoints.minOf { it.longitude }
-                        )
-                        view.zoomToBoundingBox(box, false, 150)
                     } else if (readyArea != null) {
                         val box = GeoMath.boundingBoxForRadius(readyArea.centerLat, readyArea.centerLon, readyArea.radiusMeters)
                         view.zoomToBoundingBox(BoundingBox(box.maxLat, box.maxLon, box.minLat, box.minLon), false)

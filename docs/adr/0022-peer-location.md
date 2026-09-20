@@ -60,18 +60,24 @@ tap-to-open `Marker.title` info bubble, which the user explicitly
 flagged: a name that only appears after tapping every pin individually
 defeats the point of a "who's around me" map.
 
-## Real bug found by testing
+## A false alarm during testing, worth recording
 
-The camera only ever fit the downloaded area's own fixed 2km bounding
-box (`GeoMath.boundingBoxForRadius` around the download center). A peer
-or SOS marker placed genuinely outside that box was added to
-`view.overlays` correctly — real data, real marker, real position — but
-sat off-screen with nothing visibly wrong on screen, which looked
-identical to "peers aren't showing" even though they were. Fixed by
-computing a combined bounding box across every marker actually present
-(download center + every peer + every SOS) and fitting the camera to
-that instead, falling back to the fixed 2km box only when nothing else
-exists to frame against.
+A peer marker placed genuinely far outside the downloaded area's fixed
+2km viewport was added to `view.overlays` correctly — real data, real
+marker, real position — but the camera itself never moved to fit it,
+since it only ever frames the downloaded area's own box
+(`GeoMath.boundingBoxForRadius` around the download center). At first
+glance this looked identical to "peers aren't showing." A combined-
+bounding-box fix (frame every marker present, not just the download
+area) was built and then explicitly reverted at the user's request: the
+fixed download-area viewport is the one that actually matters for the
+real use case (a peer near you, on the map you already downloaded), and
+chasing every marker's position would make the camera jump around
+unpredictably as new peers/SOS reports arrive. **Known limitation,
+accepted deliberately**: a peer or SOS marker placed well outside the
+downloaded area's own viewport is real and present in the data, but
+won't be automatically framed by the camera — panning/zooming manually
+still finds it.
 
 ## How this was tested without a second phone
 

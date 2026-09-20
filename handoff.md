@@ -586,9 +586,12 @@ everything described above.
   (§10) — the user's own explicit next step after maps, plus a demo-value
   ask ("both phones show up on the map"). Built and tested via a new
   debug-only `SosSimulator` tool on a single device (still no second
-  phone available this session); found and fixed a real camera-framing
-  bug where markers outside the download area's box were added correctly
-  but sat invisibly off-screen.
+  phone available this session). A combined-bounding-box camera fix (so
+  a marker outside the download area's own viewport gets auto-framed)
+  was built, then explicitly reverted at the user's request — the fixed
+  download-area viewport is the one that matters for the real use case,
+  and chasing every marker would make the camera jump around
+  unpredictably as new ones arrive. See §10's known gaps.
 
 ## 8. SOS broadcast
 
@@ -817,13 +820,17 @@ the pin head, not left to osmdroid's tap-to-open `Marker.title` bubble —
 a name that only appears after tapping every pin individually defeats
 the point of a "who's around me" map.
 
-**Real bug found while testing this**: the camera only ever fit the
-downloaded area's own fixed 2km box, so a peer or SOS marker outside
-that box was added to the map correctly but sat off-screen with nothing
-visibly wrong — indistinguishable from "peers aren't showing" even
-though they were. Fixed by computing a bounding box across every marker
-actually present (falling back to the fixed 2km box only when nothing
-else is around to frame against).
+**A false alarm found while testing this**: the camera only ever fits
+the downloaded area's own fixed 2km box, so a peer or SOS marker placed
+genuinely outside it is added to the map correctly but sits off-screen
+with nothing visibly wrong — indistinguishable at a glance from "peers
+aren't showing." A combined-bounding-box fix (frame every marker
+present) was built and then explicitly reverted at the user's request:
+the fixed download-area viewport is the one that matters for the real
+use case, and chasing every marker's position would make the camera
+jump around unpredictably as new ones arrive. **Accepted limitation**: a
+marker well outside the downloaded viewport won't be auto-framed —
+manual pan/zoom still finds it.
 
 **How this was tested without a second phone**: `debug/SosSimulator.kt`,
 registered only when `BuildConfig.DEBUG` is true (never in a release
