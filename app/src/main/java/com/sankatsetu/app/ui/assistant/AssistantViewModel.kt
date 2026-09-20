@@ -3,7 +3,6 @@ package com.sankatsetu.app.ui.assistant
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.sankatsetu.app.assistant.AssistantEngine
-import com.sankatsetu.app.assistant.AssistantExchange
 import com.sankatsetu.app.assistant.AssistantSource
 import com.sankatsetu.app.assistant.SuggestedAction
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -40,38 +39,29 @@ class AssistantViewModel(private val engine: AssistantEngine) : ViewModel() {
         if (question.isBlank()) return
         val turn = AssistantTurn(question = question)
 
-        // Snapshot prior turns as history *before* appending the new one —
-        // this is what makes a follow-up like "what about for a child?"
-        // resolve against the actual preceding exchange instead of the
-        // model seeing each question cold, per the multi-turn requirement.
-        // Only a completed, KB-grounded answer counts as history (sources
-        // non-empty) — a still-pending or extractive-fallback answer isn't
-        // something the model itself said, and a plain-chat answer (no KB
-        // match, see AssistantEngine.answer's general-conversation branch)
-        // isn't part of *this* crisis conversation at all. A real latency
-        // bug found by actually asking "hello" then a real question right
-        // after: before this filter, "hello" — a real generation, so it
-        // passed the old wasGenerated-only check — got threaded into the
-        // next prompt's "Conversation so far" block as irrelevant history,
-        // bloating the prompt against the model's shared 1280-token prompt+
-        // output budget and pushing it toward the rambling/retry failure
-        // mode already documented in MediaPipeLlmAssistant's own comments.
-        val history = _uiState.value.turns.mapNotNull { prior ->
-            val answer = prior.answer
-            if (answer != null && prior.wasGenerated && prior.sources.isNotEmpty()) {
-                AssistantExchange(prior.question, answer)
-            } else {
-                null
-            }
-        }
-
+        // Every question is answered independently — no prior exchange is
+        // passed as history, ever. This used to carry the last couple of
+        // turns forward so a follow-up like "what about for a child?"
+        // could resolve against the preceding answer. A real-device test
+        // found this ~0.5B model does NOT reliably obey the prompt's own
+        // "ignore the prior answer for a different situation" instruction:
+        // asking "how do I stop massive bleeding" (correctly answered with
+        // tourniquet guidance) and then, in the same conversation, "how do
+        // I apply a tourniquet" produced an answer contaminated with facts
+        // from the FIRST question's context rather than a clean, correctly-
+        // grounded tourniquet answer on its own — confirmed by asking the
+        // exact same second question fresh (conversation cleared first),
+        // which came back correct every time. A wrong answer to a genuinely
+        // new question is worse than losing pronoun-resolution on a rare
+        // follow-up, so history is off entirely rather than half-fixed.
+        // See docs/adr/0021-llm-grounding-regression.md's update.
         _uiState.value = _uiState.value.copy(
             turns = _uiState.value.turns + turn,
             isThinking = true
         )
 
         viewModelScope.launch {
-            val result = engine.answer(question, history)
+            val result = engine.answer(question, history = emptyList())
             val updatedTurns = _uiState.value.turns.map {
                 if (it.id == turn.id) {
                     it.copy(
@@ -87,12 +77,11 @@ class AssistantViewModel(private val engine: AssistantEngine) : ViewModel() {
     }
 
     /**
-     * Clears the visible conversation and, just as importantly, the model's
-     * own memory of it: [ask] builds [AssistantEngine.answer]'s `history`
-     * argument from `_uiState.value.turns` on every call, so an emptied
-     * turns list is the entire mechanism — there's no separate context
-     * object to reset elsewhere. Turns were never persisted to a database
-     * in the first place (a restart already loses them); this just lets the
+     * Clears the visible conversation. [ask] no longer carries any prior
+     * turn into the model's own prompt (see its doc), so this only clears
+     * what's shown on screen — there's no separate model-side context to
+     * reset alongside it. Turns were never persisted to a database in the
+     * first place (a restart already loses them); this just lets the
      * person do it deliberately, mid-session, without restarting the app.
      */
     fun clearConversation() {

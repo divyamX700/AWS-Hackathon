@@ -1,10 +1,10 @@
 [
   {
     "doc": "bleeding_and_wounds",
-    "section": "When to Use a Tourniquet",
-    "image": "kb/images/tourniquet_application.jpg",
-    "caption": "A tourniquet tied above a severe limb wound, tightened until the bleeding stops.",
-    "attribution": "U.S. Department of Defense photo by Fred W. Baker III, 2008 — public domain, via Wikimedia Commons"
+    "section": "How to Apply a Tourniquet",
+    "image": "kb/images/tourniquet_steps_diagram.png",
+    "caption": "Three steps: tie the band 5 to 7 cm above the wound, twist a stick underneath to tighten until bleeding stops, then tie it off and note the time.",
+    "attribution": "Original illustration, drawn for this app"
   },
   {
     "doc": "cpr_and_choking",

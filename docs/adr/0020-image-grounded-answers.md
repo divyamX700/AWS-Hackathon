@@ -72,7 +72,7 @@ bloat for a phone-shipped offline app:
 
 | Section | Image | License / attribution |
 |---|---|---|
-| `bleeding_and_wounds` — When to Use a Tourniquet | `tourniquet_application.jpg` | Public domain, U.S. DoD photo by Fred W. Baker III |
+| `bleeding_and_wounds` — How to Apply a Tourniquet | `tourniquet_steps_diagram.png` | Original illustration, drawn for this app (see update below) |
 | `cpr_and_choking` — Performing Chest Compressions | `cpr_chest_compressions.jpg` | CC BY-SA 2.0 FR, photo by Rama |
 | `cpr_and_choking` — Choking in Adults and Children Over One Year | `heimlich_adult.jpg` | Public domain, U.S. Army Medical Dept. Center and School |
 | `cpr_and_choking` — Choking in Infants Under One Year | `heimlich_infant.png` | CC BY-SA 4.0, illustration by BruceBlaus |
@@ -105,3 +105,32 @@ text content (see the knowledge-base files themselves for those).
   reference implementation with no UI to show an image in at all (see
   `gateway/README.md`), so there is nothing there for this feature to attach
   to.
+
+## Update: the tourniquet image was swapped and the section it maps to changed
+
+Live demo-prep testing found two real problems with the original tourniquet
+photo:
+
+1. The single-action photo ("a tourniquet tied, tightened") wasn't a real
+   step-by-step diagram, and the user wanted a genuine multi-step visual —
+   not a demo-only ask, a fair critique of what "grounded in an image"
+   should mean for something a user is trying to learn to do.
+2. The image was attached to `## When to Use a Tourniquet`, which is also
+   the top-ranked section for a plain "how do I stop massive bleeding"
+   query — so the image showed up on a question that was never actually
+   about applying a tourniquet, only about whether one was warranted.
+
+Fixed by splitting the section in two: `## When to Use a Tourniquet` (the
+decision — last resort, life-threatening bleeding) and a new
+`## How to Apply a Tourniquet` (the actual technique). The image now maps
+to the new section only, so "how do I stop massive bleeding" retrieves the
+decision section (no image) and "how do I apply a tourniquet" retrieves
+the technique section (with the image) — verified live, both independently.
+
+The image itself is `tourniquet_steps_diagram.png`, a 3-step illustration
+the user drew themselves in Adobe and provided directly — not sourced from
+Wikimedia Commons like the other four, since a suitable free-licensed
+step-by-step tourniquet diagram could not be found there after a real
+search (only single-moment photos and unrelated specialized-device
+figures turned up). `tourniquet_application.jpg` (the original DoD photo)
+was removed from the repo as no longer referenced.

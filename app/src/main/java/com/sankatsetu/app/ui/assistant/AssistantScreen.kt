@@ -22,8 +22,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -41,10 +39,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Payments
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -63,7 +59,6 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.unit.dp
 import com.sankatsetu.app.assistant.KnowledgeChunk
 import com.sankatsetu.app.assistant.KnowledgeImage
-import com.sankatsetu.app.assistant.SuggestedAction
 import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
 import com.sankatsetu.app.ui.theme.pressScale
 import com.sankatsetu.app.ui.theme.rememberShimmerProgress
@@ -310,26 +305,22 @@ private fun TurnCard(
                         KnowledgeImageCard(turnImage)
                     }
 
-                    if (turn.wasGenerated && turn.suggestedAction != SuggestedAction.NONE) {
-                        Spacer(Modifier.height(10.dp))
-                        when (turn.suggestedAction) {
-                            SuggestedAction.BROADCAST_SAFE -> AssistChip(
-                                onClick = onBroadcastSafe,
-                                label = { Text("Broadcast \"I'm safe\" now") },
-                                leadingIcon = { Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                shape = MaterialTheme.shapes.small,
-                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-                            )
-                            SuggestedAction.OPEN_PAY -> AssistChip(
-                                onClick = onOpenPay,
-                                label = { Text("Open Pay tab") },
-                                leadingIcon = { Icon(Icons.Filled.Payments, contentDescription = null, modifier = Modifier.size(18.dp)) },
-                                shape = MaterialTheme.shapes.small,
-                                colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
-                            )
-                            SuggestedAction.NONE -> Unit
-                        }
-                    }
+                    // The suggested-action chip (Broadcast "I'm safe" /
+                    // Open Pay tab) is intentionally never rendered, even
+                    // though AssistantEngine still parses an Action line
+                    // out of the model's own output — a real-device test
+                    // found this ~0.5B model does not reliably follow the
+                    // prompt's "BROADCAST_SAFE only if the danger already
+                    // passed" instruction, the same class of unreliable
+                    // self-classification documented for conversation
+                    // history in AssistantViewModel.ask()'s doc. It showed
+                    // up on unrelated first-aid questions ("how to stop
+                    // massive bleeding") where it was actively wrong, not
+                    // just unhelpful. turn.suggestedAction is left in the
+                    // data model rather than removed, since AssistantEngine
+                    // parsing it out of the visible answer text is still
+                    // correct and necessary regardless of whether the UI
+                    // acts on it.
                 }
             }
         }

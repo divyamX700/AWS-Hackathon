@@ -1,6 +1,6 @@
 # ADR 0021: On-device LLM grounding regression after the knowledge-base expansion
 
-**Status:** Open — mitigated, not resolved
+**Status:** Resolved for the case that matters (a topic-switching question in the same conversation) — root cause narrowed, see update below
 **Date:** 2026-09-20
 
 ## Context
@@ -96,3 +96,44 @@ Things not yet tried, in rough order of how much they'd tell you:
   the three questions above on a device.
 - `docs/TODO.md` should carry a pointer to this ADR until it's closed out
   with a real, device-verified answer.
+
+## Update: root cause narrowed to conversation history, not context blending
+
+Further live testing (the exact demo sequence — "how do I stop massive
+bleeding" then, in the same conversation, "how do I apply a tourniquet")
+found the `matches.take(1)` mitigation alone was still not enough: the
+second question's answer was still contaminated with facts from the
+first question's retrieved passage. The decisive test: asking the exact
+same second question **with the conversation cleared first** (no prior
+turn at all) came back clean and correctly grounded, every time. That
+isolates the cause precisely — this ~0.5B model does not reliably obey
+`buildPrompt`'s own "Conversation so far... is ONLY for resolving a
+pronoun or follow-up... never a source of facts; if the new question is
+a different situation, ignore the prior answer entirely" instruction.
+
+**Fix**: `AssistantViewModel.ask()` now never passes any prior turn as
+history — every question is answered independently, always. This gives
+up real multi-turn follow-up resolution (e.g. "what about for a child?"
+after a first aid answer), which the original feature was built for. That
+trade was made deliberately: a wrong answer to a genuinely new question is
+worse than losing pronoun resolution on a rarer follow-up question, and
+this is a rural crisis-response app where a wrong tourniquet-adjacent
+answer is a real harm, not just an inconvenience.
+
+**A second instance of the same root cause was found and fixed the same
+way**: the suggested-action chip ("Broadcast \"I'm safe\" now" /
+"Open Pay tab") — driven by an `Action:` line the model is asked to
+self-classify at the top of every guide-format answer — showed up on
+plain first-aid questions that were never about a resolved emergency,
+for the same underlying reason: the model does not reliably follow a
+self-classification instruction in this prompt format. `AssistantScreen.kt`
+no longer renders that chip at all, regardless of what `Action:` value
+the model emits; `AssistantEngine` still parses the line out of the
+visible text (that part is correct and necessary), the UI just never
+acts on it.
+
+Not yet re-examined: whether a *smaller*, more targeted set of grounded
+facts (rather than removing history altogether) could have preserved
+follow-up resolution without contamination — e.g., only including history
+when the new question's top-ranked section matches the prior turn's. That
+was scoped out for time, not because it's known not to work.
