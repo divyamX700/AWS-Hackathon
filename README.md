@@ -54,10 +54,22 @@ Full product spec: [`docs/PRD.md`](docs/PRD.md). Day-by-day build plan:
   emergency broadcast, the counterpart to "I'm Safe" — unsigned and
   un-Noise-encrypted on purpose, since it's meant to reach and be
   readable by every phone in range, including a stranger with no
-  completed handshake. Press-and-hold to send, an interrupting dialog
-  plus a reviewable log to receive. See `docs/TODO.md` for the full
-  reasoning and honest gaps (a real two-phone delivery of this is
-  untested, same limitation as the rest of the mesh).
+  completed handshake. Press-and-hold to send, a pulsing log-row
+  animation plus a small nav-icon tag to receive (not a blocking
+  dialog — an earlier version was, direct user feedback replaced it).
+  See `docs/TODO.md` for the full reasoning and honest gaps (a real
+  two-phone delivery of this is untested, same limitation as the rest of
+  the mesh).
+- **Offline maps** (new 4th section, `docs/adr/0020`): download roughly
+  a 2km radius around you once, while online, then pan/zoom it with zero
+  connectivity afterward — verified with Wi-Fi and mobile data both
+  disabled on real hardware. Deliberately separate from the three
+  zero-internet pillars above: this is a preventive, before-a-trip
+  action, the app's first genuine use of real device location (a
+  one-time GPS fix), and its first real internet dependency (a MapTiler
+  API key, since the public OSM tile server explicitly refuses bulk
+  offline downloads — see the ADR for the on-device `TileSourcePolicyException`
+  this found).
 
 Not yet built: courier envelopes (relaying via a third party's phone),
 Nostr bridge, gateway coordinator, an SOS acknowledgment reply. Cedar
@@ -69,7 +81,7 @@ the real cross-compile landed.
 assembleDebug` succeeds (~120 MB APK — grew from an earlier ~57 MB once
 the real Cedar native `.so` for both ABIs was added, see `docs/adr/0017`;
 MediaPipe's native libs also included); `./gradlew testDebugUnitTest`
-passes all 68 unit tests, 0 failures —
+passes all 72 unit tests, 0 failures —
 including a genuine multi-router mesh integration test (two and three
 `MessageRouter`s wired together via in-memory links, proving encode →
 fragment → relay → reassemble → dedup → deliver end to end, with real
@@ -127,7 +139,14 @@ JDK/Windows bug, not a project bug, and that ADR has the diagnosis and fix
 Requires two Android 10+ (API 29+) devices with Bluetooth LE for the mesh
 demo — an emulator has no real Bluetooth radio, so mesh discovery/pairing
 can only be verified on physical hardware. No AWS account, no server, no
-internet connection needed for the mesh or Assistant features.
+internet connection needed for the mesh, Pay, or Assistant features. The
+offline-maps tab is the one deliberate exception — it needs internet
+once, to download an area in advance (see `docs/adr/0020`), and needs a
+free MapTiler API key: sign up at maptiler.com (no card), copy your key
+from Account → API keys, and add it to your own `local.properties` as
+`maptiler.api.key=YOUR_KEY` (gitignored, same file as the SDK path — a
+fresh clone with no key set just gets an honest download failure, not a
+silently broken map).
 
 The Assistant tab works out of the box with no setup (BM25+TF-IDF retrieval
 over the 22-document knowledge base, extractive answers). To get real

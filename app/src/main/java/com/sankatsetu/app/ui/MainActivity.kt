@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -47,6 +48,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.sp
 import com.sankatsetu.app.ui.chat.PeerUiModel
 import com.sankatsetu.app.ui.emergency.SosViewModel
+import com.sankatsetu.app.ui.map.MapScreen
+import com.sankatsetu.app.ui.map.MapViewModel
 import com.sankatsetu.app.ui.pay.PayScreen
 import com.sankatsetu.app.ui.pay.PayViewModel
 import com.sankatsetu.app.ui.theme.ConsoleReadoutStyle
@@ -65,6 +68,7 @@ import com.sankatsetu.app.ui.theme.SankatSetuTheme
 private enum class Tab(val label: String, val icon: ImageVector) {
     CHAT("Chat", Icons.AutoMirrored.Filled.Chat),
     PAY("Pay", Icons.Filled.Payments),
+    MAP("Map", Icons.Filled.Map),
     ASSISTANT("Assistant", Icons.Filled.AutoAwesome)
 }
 
@@ -106,6 +110,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var assistantViewModel: AssistantViewModel
     private lateinit var payViewModel: PayViewModel
     private lateinit var sosViewModel: SosViewModel
+    private lateinit var mapViewModel: MapViewModel
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -160,6 +165,19 @@ class MainActivity : ComponentActivity() {
                 }
             }
         )[SosViewModel::class.java]
+
+        mapViewModel = ViewModelProvider(
+            this,
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return MapViewModel(
+                        locationProvider = app.container.locationProvider,
+                        mapAreaStore = app.container.mapAreaStore
+                    ) as T
+                }
+            }
+        )[MapViewModel::class.java]
 
         requestPermissions.launch(requiredPermissions())
 
@@ -254,6 +272,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                     Tab.PAY -> PayScreen(viewModel = payViewModel)
+                                    Tab.MAP -> MapScreen(viewModel = mapViewModel)
                                     Tab.ASSISTANT -> AssistantScreen(
                                         viewModel = assistantViewModel,
                                         knowledgeBase = app.container.knowledgeBase,

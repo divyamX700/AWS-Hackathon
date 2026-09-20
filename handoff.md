@@ -52,6 +52,13 @@ original PRD's coordinator concept) — every feature runs standalone on
 the phone. The three offline pillars above are the core; the mesh IOU is
 real but secondary, never given equal billing with actual UPI payment.
 
+**A 4th, deliberately separate section was added 2026-09-20**: offline
+maps. Unlike the three pillars, it's not a zero-internet feature — it
+needs a real internet connection once, in advance, to download a 2km
+radius around the person, framed explicitly as preventive (before a trip
+to a remote or high-risk area, not reached for during a crisis, since
+there's no internet during one to download anything with). See §9.
+
 ## 2. Architecture
 
 ```
@@ -99,7 +106,7 @@ gateway/              Strands Agents SDK + Ollama reference agent (Python,
                        standalone, a laptop CLI tool — not part of the
                        Android app, no code path connects them). See §5's
                        AWS section and gateway/README.md.
-scripts/              Setup scripts for a new machine, see §9.
+scripts/              Setup scripts for a new machine, see §10.
 docs/
   PRD.md, PLAN.md     Original product spec and day-by-day build plan —
                        historical, several features scoped there were
@@ -260,7 +267,7 @@ latency regressions (prompt bloat pushing the model toward its own
 documented worst-case rambling/retry behavior).
 
 If no model is side-loaded at all (the common case on a fresh clone — see
-§9), the extractive fallback returns the best-matched passage verbatim,
+§10), the extractive fallback returns the best-matched passage verbatim,
 never fabricated, and the UI marks this state visibly.
 
 **Model**: `Qwen2.5-0.5B-Instruct`, int8, MediaPipe LLM Inference API
@@ -275,7 +282,7 @@ markers made this specific quantized conversion emit zero tokens — a
 plain unstructured prompt works, ChatML markers don't).
 
 The model file (~521MB) is **not committed to git** (`docs/adr/0005`,
-GitHub's 100MB limit) — side-loaded via `adb push`, see §9.
+GitHub's 100MB limit) — side-loaded via `adb push`, see §10.
 
 The on-device agent used to have a third stage (an on-request
 message-drafting call, turning a Q&A into a short shareable summary).
@@ -371,7 +378,11 @@ register (hop counts, timestamps, amounts) — never body prose.
 - **SOS broadcast**: send path and local log verified on real hardware
   (see §8) — same single-device limitation as the rest of the mesh for
   an actual received alert.
-- Full unit test suite: **68/68 passing** as of this handoff
+- **Offline maps**: full cold-cache download verified on real hardware —
+  real GPS fix, real MapTiler tiles, then confirmed genuinely usable with
+  Wi-Fi and mobile data both disabled (panning inside the downloaded area
+  works, panning outside it correctly shows nothing cached). See §9.
+- Full unit test suite: **72/72 passing** as of this handoff
   (`./gradlew testDebugUnitTest`).
 
 ## 4. AWS Build It integration status
@@ -382,7 +393,7 @@ mandatory to win a prize"* — one tool, not all eight.
 
 | Tool | Status | Detail |
 |---|---|---|
-| **Corretto** | 🟢 Verified | Amazon Corretto 11 is the actual JDK building this app. Pinned via machine-local `~/.gradle/gradle.properties`, not the repo — see §9's setup notes, including a real gotcha about the Gradle launcher process needing `JAVA_HOME` itself set, not just the daemon property. |
+| **Corretto** | 🟢 Verified | Amazon Corretto 11 is the actual JDK building this app. Pinned via machine-local `~/.gradle/gradle.properties`, not the repo — see §10's setup notes, including a real gotcha about the Gradle launcher process needing `JAVA_HOME` itself set, not just the daemon property. |
 | **Cedar** | 🟢 Verified, real hardware | See §2's Cedar section above. |
 | **Strands Agents SDK** | 🟢 Verified, but see the caveat below | `gateway/agent/` — a real `strands.Agent` + `OllamaModel`, fully offline, mirroring (mostly — see below) the Kotlin engine's pipeline. This is a **standalone Python CLI script on a laptop**, not part of the Android app, and there is no code path — none, under any connectivity condition — from the phone app to it. A user of the actual app can never reach it. It exists purely to demonstrate genuine Strands SDK usage for judging. **Caveat**: it still has all 3 original agent stages (including message-drafting), while the Kotlin app dropped its drafting stage this session — they are no longer a matched pair. Worth a decision before finalizing any submission material that claims parity. |
 | **PartyRock** | 🔴 Not done | Needs the user's own 10 minutes in a browser at partyrock.aws — no code work possible on this end. |
@@ -396,6 +407,17 @@ no-central-coordinator constraint, most of the remaining tools (SAM CLI,
 LocalStack, OpenSearch as a server) don't have a natural place to live —
 they're server/backend tools for an app with no backend. Treat the AWS
 requirement as closed unless there's a specific reason to add a 4th.
+
+**Explicitly considered and declined for the offline-maps feature
+(2026-09-20)**: SAM CLI + LocalStack for a demonstration Lambda/S3
+"map-extraction service" pipeline. Correctly rejected once the user
+clarified the actual constraint: SAM CLI/LocalStack is inherently a
+laptop-side dev-time tool (Docker containers emulating AWS), so using it
+at all means a second component existing outside the phone app — exactly
+the "separate laptop/coordinator" pattern the user had just said they
+didn't want repeated (see the Strands `gateway/` caveat above). No AWS
+tool touches the maps feature; it doesn't need one, and 3/8 already
+satisfies the rule.
 
 ## 5. Known problems and open questions
 
@@ -424,6 +446,17 @@ requirement as closed unless there's a specific reason to add a 4th.
   unexplained, harmless.
 - **Light theme, TalkBack, and 200% font scale** are not verified against
   the current (or any prior) build on real hardware.
+- **Offline maps only cache one area at a time** — re-downloading
+  overwrites the previous record (`MapAreaStore` holds a single entry).
+  A tourist visiting several high-risk stops on one trip needs to
+  re-download at each one, not a running multi-area cache. See §9.
+- **Offline maps has no SOS/location integration yet** — the user's own
+  stated next step, not built this pass. See §9.
+- **A second real data-wipe mistake happened this session**: `adb pm
+  clear` was used mid-session to force a clean cold-cache test for the
+  maps feature, wiping the same kind of real test-phone data the earlier
+  `adb uninstall` incident (§7) already flagged as something to never
+  repeat. Recorded here plainly rather than only in chat history.
 
 ## 6. Immediate next steps, in priority order
 
@@ -442,7 +475,11 @@ requirement as closed unless there's a specific reason to add a 4th.
 6. Consider the LLM hallucination issue if time allows.
 7. Consider an `SOS_ACK` reply type and a local SOS send-rate limit if
    time allows (§8).
-8. OpenSearch remains the most tractable *additional* AWS tool if ever
+8. **Design and build the SOS/offline-maps integration** the user has
+   already signaled intent for (a real location attached to an SOS report,
+   now that real location exists) — a genuine design conversation of its
+   own, not started yet. See §9.
+9. OpenSearch remains the most tractable *additional* AWS tool if ever
    wanted, though not required.
 
 ## 7. Session log
@@ -514,6 +551,28 @@ everything described above.
   thread was inserted directly via the real DAOs to show the user how an
   out-of-range-but-previously-met peer renders, then removed with
   `PeerDao.delete` + `MessageDao.deleteThread` — no data lost that time.
+- **Replaced SOS's full-screen blocking interrupt dialog** with a
+  non-blocking pulsing log-row animation plus a small "SOS" nav-icon tag,
+  after direct user feedback that a modal interrupt was too disruptive.
+  Found and fixed a real bug in the same pass: the "already animated"
+  flag lived in per-row Compose `remember` state, which reset every time
+  a row scrolled out of the lazy list's window and back in, replaying the
+  pulse — moved to a plain `Set` on `SosViewModel`, which outlives any
+  single row's composition.
+- **Built the offline-maps feature end to end** (a new, 4th section — see
+  §9 for the full detail). Real bugs found and fixed by actually testing
+  on-device, not by inspection: the public OSM tile server's own
+  `TileSourcePolicyException` on bulk download (led to sourcing a real
+  MapTiler API key instead of routing around the policy), a `CacheManager`
+  built from the visible `MapView` visibly dragging that MapView's own
+  camera across zoom levels during download (looked exactly like a
+  runaway multi-hundred-km download; fixed by using the `MapView`-free
+  `CacheManager` constructor), and a progress percentage that legitimately
+  exceeds 100% (a real `osmdroid` tile-count-estimate quirk, fixed by
+  clamping the display). Verified with Wi-Fi and mobile data both
+  disabled: the downloaded area renders and pans correctly, and panning
+  outside the 2km radius correctly shows nothing cached. A second
+  `adb pm clear` data-wipe mistake happened while testing this — see §5.
 
 ## 8. SOS broadcast
 
@@ -583,7 +642,77 @@ so a long alert history can never push the peer list, or an open chat
 thread, off screen. Each row also got a trailing `HH:mm` timestamp
 (reusing the same formatter chat bubbles already use).
 
-## 9. Setting up on a new machine
+## 9. Offline maps
+
+A new, 4th section (`ui/map/MapScreen.kt`, `MapViewModel.kt`), built
+2026-09-20 — see `docs/adr/0020-offline-maps.md` for the full decision
+record. Deliberately **not** framed as a fourth offline pillar: it needs
+real internet once, in advance, and is explicitly preventive (before a
+trip to a remote or high-risk area), not something used during a crisis.
+
+**Library**: `osmdroid` (`org.osmdroid:osmdroid-android:6.1.20`), chosen
+over `MapLibre` GL Native specifically to avoid a third round of native
+`.so` toolchain pain (Cedar, `docs/adr/0017`; MediaPipe,
+`docs/adr/0006`/`0011`) — `osmdroid` is pure Kotlin/Java, verified to dex
+cleanly on this project's pinned toolchain before any feature code was
+written. Real trade-off: `osmdroid` itself is archived upstream (frozen
+at 6.1.20, no further releases) — still fully functional; Mapsforge
+(actively maintained, also pure Java, genuinely vector/offline-first) is
+the honest upgrade path if there's ever time.
+
+**Flow**: request location once (`maps/LocationProvider.kt`, plain
+`LocationManager`, no Play Services) → compute a 2km-radius bounding box
+(`maps/GeoMath.kt`, unit-tested, accounts for real longitude compression
+at latitude) → download raster tiles for zoom 12-17 via `osmdroid`'s
+`CacheManager` → persist the downloaded area's metadata
+(`maps/MapAreaStore.kt`, SharedPreferences, same tier as `NicknameStore`)
+so reopening the app shows the map immediately without re-downloading.
+
+**Real bugs found by testing on-device, not by inspection**:
+1. The public OSM tile server (`TileSourceFactory.MAPNIK`) throws
+   `TileSourcePolicyException` on any bulk download — a real, deliberate
+   `osmdroid` guardrail mirroring that server's own usage policy against
+   bulk/app-embedded fetching. Fixed with a different, honest tile
+   provider (MapTiler, free tier, no card) — never by silencing the
+   guardrail on the same restricted server. The API key lives in
+   `local.properties` (gitignored) → `BuildConfig.MAPTILER_API_KEY`,
+   never committed. See `maps/MapTileSource.kt`.
+2. Building `CacheManager` from the visible, on-screen `MapView` made
+   that MapView's own camera visibly drag across zoom levels while the
+   download ran internally — looked exactly like the download expanding
+   to cover hundreds of kilometers, even though the actual downloaded
+   `BoundingBox` (independently logged and verified) was a correct 2km
+   radius the whole time. Fixed by constructing `CacheManager` from the
+   `MapTileProviderBase`/`ITileSource` + `SqlTileWriter()` overload
+   instead, which has no `MapView` at all and so cannot touch any camera.
+3. The download progress percentage legitimately exceeds 100% (observed
+   past 290%) — `osmdroid`'s own upfront tile-count estimate can run low
+   against the real count at the finest zoom. The download isn't stuck;
+   fixed by clamping the *displayed* value, not the estimate.
+
+**Verified on real hardware**: a full cold-cache download (real GPS fix
+in Maligaon, Guwahati, Assam — not simulated; real MapTiler tiles;
+complete in under two minutes over a real connection, camera stable
+throughout after fix #2). Then, with Wi-Fi and mobile data both
+disabled: the downloaded area still renders and pans correctly with zero
+network, and panning outside the 2km radius correctly shows `osmdroid`'s
+blank placeholder — proof the download is honestly scoped, not secretly
+caching more.
+
+**Known gaps, stated plainly**: only one area can be cached at a time
+(re-download overwrites the previous record); no staleness check on old
+downloads; GPS-only location with no network-based fallback (an indoor
+GPS attempt during testing genuinely timed out after 30 seconds — the
+app's own honest error message and retry button, not a bug); no
+SOS/location integration yet, which is the user's own stated next step
+now that real location exists in the app for the first time.
+
+**AWS**: none used, none needed for this feature — see §4's own note on
+SAM CLI/LocalStack being considered and explicitly declined once the
+user clarified they didn't want any laptop-side companion component,
+even a demo-only one.
+
+## 10. Setting up on a new machine
 
 1. **JDK**: install Amazon Corretto 11 (`scripts/setup-corretto.sh`), pin
    `org.gradle.java.home` in your own `~/.gradle/gradle.properties` (not
@@ -618,3 +747,9 @@ thread, off screen. Each row also got a trailing `HH:mm` timestamp
    ```
    See `docs/adr/0011` for why this exact model/file variant and not any
    other on that page.
+8. **For the offline-maps tab to actually download anything**: get a
+   free MapTiler API key (maptiler.com, no card, Account → API keys) and
+   add it to your own `local.properties` (gitignored) as
+   `maptiler.api.key=YOUR_KEY`. Without it, the download fails with an
+   honest network/auth error rather than a silently broken map — see
+   §9 and `docs/adr/0020`.

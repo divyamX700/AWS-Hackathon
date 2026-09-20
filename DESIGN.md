@@ -130,6 +130,14 @@ prior passes — a demo phone shows this app's own palette.
   instead of reinforcing it; the log rows were changed to plain
   divider-separated rows (`SosLogRow` in `ChatScreen.kt`) where icon tint
   and text color alone carry the meaning.
+- **Map tab overlays** (`ui/map/MapScreen.kt`, added for offline maps,
+  see `docs/adr/0020`) — `StatusOverlay`, `DownloadPrompt`, `ReadyBadge`:
+  deliberately plain, using only existing tokens (`surfaceContainer`
+  cards, the ledger's near-square corner radius, `StatusSafe` green for
+  the one "genuinely offline now" confirmation). No new visual vocabulary
+  was introduced for this section — it reads as another register in the
+  same ledger, not a distinct world of its own, since a map is
+  functional chrome here, not a moment that needs its own visual voice.
 
 ## Known gaps (honest, not fixed this pass)
 

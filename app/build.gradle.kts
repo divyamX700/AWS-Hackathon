@@ -1,8 +1,21 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
+
+// Read from the machine-local, gitignored local.properties — same file the
+// SDK path already lives in — never from a committed file. Missing key
+// (a fresh clone with no key set up yet) falls back to an empty string
+// rather than failing the build; MapScreen's own tile source construction
+// is what actually needs to handle "no key configured" honestly.
+val localProperties = Properties().apply {
+    val file = rootProject.file("local.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
+}
+val mapTilerApiKey: String = localProperties.getProperty("maptiler.api.key", "")
 
 android {
     namespace = "com.sankatsetu.app"
@@ -22,6 +35,13 @@ android {
         versionName = "0.1.0-hackathon"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // See docs/adr/0020-offline-maps.md — the public OSM tile server
+        // (osmdroid's TileSourceFactory.MAPNIK) explicitly refuses bulk/
+        // offline downloads in code (TileSourcePolicyException,
+        // FLAG_NO_BULK), a real ToS-driven guardrail, not a bug. MapTiler's
+        // free tier (no card, ~100k loads/month) permits it.
+        buildConfigField("String", "MAPTILER_API_KEY", "\"$mapTilerApiKey\"")
     }
 
     buildTypes {
@@ -153,6 +173,15 @@ dependencies {
     implementation("com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2")
     implementation("com.fizzed:jne:4.3.0")
     implementation("com.google.guava:guava:33.4.0-jre")
+
+    // --- Offline maps (2km-radius area download, Day 4) ---
+    // Pure Kotlin/Java, no native .so — a deliberate choice given this
+    // project's own history of native-dependency toolchain pain (Cedar,
+    // docs/adr/0017). Archived upstream since Aug 2024 (v6.1.20 is final,
+    // no more releases) but still functional; Mapsforge (actively
+    // maintained, also pure Java, vector-based) is the documented upgrade
+    // path if there's ever time — see docs/adr/0020 once written.
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     // --- Testing ---
     testImplementation("junit:junit:4.13.2")

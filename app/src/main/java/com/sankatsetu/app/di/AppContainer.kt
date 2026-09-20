@@ -15,6 +15,8 @@ import com.sankatsetu.app.mesh.crypto.Identity
 import com.sankatsetu.app.mesh.crypto.NicknameStore
 import com.sankatsetu.app.mesh.emergency.SosManager
 import com.sankatsetu.app.mesh.router.MessageRouter
+import com.sankatsetu.app.maps.LocationProvider
+import com.sankatsetu.app.maps.MapAreaStore
 import com.sankatsetu.app.payments.IouManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -98,6 +100,13 @@ class AppContainer(context: Context) {
         sosDao = database.sosDao(),
         scope = appScope
     )
+
+    // Offline maps (Day 4) — see docs/adr/0020-offline-maps.md (once
+    // written). Neither of these touches Room/SQLCipher: a GPS fix isn't
+    // persisted data, and the downloaded-area record is small, non-sensitive
+    // metadata, same tier as NicknameStore's own SharedPreferences use.
+    val locationProvider: LocationProvider = LocationProvider(context)
+    val mapAreaStore: MapAreaStore = MapAreaStore(context)
 
     // The real, live Bluetooth radio state — not to be confused with
     // MessageRouter's connected-link count, which only exists once a BLE
