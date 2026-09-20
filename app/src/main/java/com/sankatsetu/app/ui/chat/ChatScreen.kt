@@ -7,6 +7,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -70,9 +71,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.ui.window.DialogProperties
 import com.sankatsetu.app.data.SosEntity
 import com.sankatsetu.app.mesh.protocol.SosCategory
 import com.sankatsetu.app.ui.components.SignalBars
@@ -220,14 +221,14 @@ fun ChatListScreen(viewModel: ChatViewModel, sosViewModel: SosViewModel, onOpenT
                     // scrolling through an ever-growing list to reach chat.
                     if (sosState.alerts.size <= SOS_LOG_INLINE_LIMIT) {
                         itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
-                            SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex)
+                            SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) })
                         }
                     } else {
                         item {
                             Box(Modifier.heightIn(max = SOS_LOG_ROW_HEIGHT * SOS_LOG_INLINE_LIMIT)) {
                                 LazyColumn {
                                     itemsIndexed(sosState.alerts, key = { _, it -> it.sosId }) { index, alert ->
-                                        SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex)
+                                        SosLogRow(alert, showDivider = index != sosState.alerts.lastIndex, onAcknowledge = { sosViewModel.acknowledge(alert.sosId) }, consumeAttentionPulse = { sosViewModel.consumeAttentionPulse(alert.sosId) })
                                     }
                                 }
                             }
@@ -445,10 +446,53 @@ private const val SOS_LOG_INLINE_LIMIT = 2
  * text color already carry the meaning; a thin hairline divider between
  * rows is enough structure.
  */
+/**
+ * Non-screen-blocking on purpose — an earlier version of this used a
+ * full-screen `AlertDialog` that interrupted whatever the person was
+ * doing, deliberately made non-dismissible. Direct user feedback
+ * replaced that with this: the row itself pulses a correction-ink tint
+ * for a few seconds when it's a fresh, unacknowledged incoming alert,
+ * enough to catch a glancing eye without ever blocking the screen a
+ * received SOS happened to arrive on top of. Tapping an unacknowledged
+ * row clears its own "NEW" pill — the row itself is now what the old
+ * dialog's confirm button was.
+ *
+ * The pulse is a plain coroutine-driven alpha toggle, not
+ * `rememberInfiniteTransition`, specifically so it has a real end (2.5s,
+ * ~3-4 pulses) rather than running forever — an alert that's still
+ * unacknowledged an hour later shouldn't still be flashing.
+ */
 @Composable
-private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
+private fun SosLogRow(alert: SosEntity, showDivider: Boolean, onAcknowledge: () -> Unit, consumeAttentionPulse: () -> Boolean) {
     val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
-    Column(Modifier.fillMaxWidth().height(SOS_LOG_ROW_HEIGHT)) {
+    val isNewIncoming = !alert.isOutgoing && !alert.acknowledged
+
+    var pulseOn by remember { mutableStateOf(false) }
+    LaunchedEffect(alert.sosId, isNewIncoming) {
+        // consumeAttentionPulse is backed by a set on SosViewModel, not
+        // remember — it survives this row scrolling out of the lazy list's
+        // window and back, so re-entering composition (which restarts this
+        // effect) doesn't replay the pulse a second time. See that
+        // function's own doc for the bug this fixes.
+        if (isNewIncoming && consumeAttentionPulse()) {
+            val until = System.currentTimeMillis() + 2500
+            while (System.currentTimeMillis() < until) {
+                pulseOn = true
+                delay(350)
+                pulseOn = false
+                delay(350)
+            }
+        }
+    }
+    val pulseAlpha by animateFloatAsState(if (pulseOn) 0.28f else 0f, animationSpec = tween(300), label = "sosPulse")
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .height(SOS_LOG_ROW_HEIGHT)
+            .background(SankatSetuColors.StatusCritical.copy(alpha = pulseAlpha))
+            .then(if (isNewIncoming) Modifier.clickable(onClick = onAcknowledge) else Modifier)
+    ) {
         Row(
             Modifier.fillMaxWidth().weight(1f).padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -472,7 +516,7 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
                     style = ConsoleReadoutStyle.copy(fontSize = 10.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (!alert.isOutgoing && !alert.acknowledged) {
+                if (isNewIncoming) {
                     Spacer(Modifier.height(4.dp))
                     StatusPill("NEW", SankatSetuColors.StatusCritical)
                 }
@@ -482,35 +526,6 @@ private fun SosLogRow(alert: SosEntity, showDivider: Boolean) {
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant, modifier = Modifier.padding(start = 26.dp))
         }
     }
-}
-
-/**
- * The interrupting surface for a fresh incoming SOS — deliberately not
- * dismissible by back press or an outside tap, the one moment in this
- * app's whole vocabulary that earns breaking that convention (see
- * docs/TODO.md's ideation: "this may be the one legitimate modal-worthy
- * moment in the whole app"). Shown from MainActivity above whichever tab
- * the person is currently on, since they might not be on Chat when it
- * arrives.
- */
-@Composable
-fun SosInterruptDialog(alert: SosEntity, onAcknowledge: () -> Unit) {
-    val category = SosCategory.entries.find { it.name == alert.category }?.label ?: alert.category
-    AlertDialog(
-        onDismissRequest = {},
-        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
-        icon = { Icon(Icons.Filled.WarningAmber, contentDescription = null, tint = SankatSetuColors.StatusCritical) },
-        title = { Text("Emergency: $category", color = SankatSetuColors.StatusCritical) },
-        text = {
-            Text(
-                "${alert.senderNickname} reported this ${if (alert.hopCount <= 1) "1 hop away" else "${alert.hopCount} hops away, relayed"}. " +
-                    "No location is available, only how many hops away they are."
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onAcknowledge) { Text("Acknowledge") }
-        }
-    )
 }
 
 /**
